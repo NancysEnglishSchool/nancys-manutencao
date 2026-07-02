@@ -183,20 +183,75 @@ window.deleteTask = async function(){
 };
 
 /* ── add new task ── */
+let _selectedTech = new Set();
+
+window.closeNewTaskModal = function(){
+  document.getElementById('new-task-modal').style.display='none';
+};
+
+window.toggleTechChip = function(el, name){
+  if(_selectedTech.has(name)){
+    _selectedTech.delete(name);
+    el.classList.remove('tech-chip-active');
+  } else {
+    _selectedTech.add(name);
+    el.classList.add('tech-chip-active');
+  }
+};
+
+window.addCustomTech = function(){
+  const inp=document.getElementById('new-task-custom-tech');
+  const name=inp.value.trim();
+  if(!name) return;
+  if(!_selectedTech.has(name)){
+    _selectedTech.add(name);
+    const chips=document.getElementById('tech-chips');
+    const span=document.createElement('span');
+    span.className='tech-chip tech-chip-active';
+    span.textContent=name;
+    span.onclick=function(){window.toggleTechChip(this,name);};
+    chips.appendChild(span);
+  }
+  inp.value='';
+};
+
+window.previewPhotos = function(input){
+  const wrap=document.getElementById('photos-preview');
+  wrap.innerHTML='';
+  Array.from(input.files).slice(0,6).forEach(f=>{
+    const url=URL.createObjectURL(f);
+    const img=document.createElement('img');
+    img.src=url; img.style.cssText='width:52px;height:52px;object-fit:cover;border-radius:8px;border:2px solid #e2e8f0';
+    wrap.appendChild(img);
+  });
+};
+
 window.addNewTask = async function(){
   const title=document.getElementById('new-task-title').value.trim();
   const unit=document.getElementById('new-task-unit').value;
   const prio=document.getElementById('new-task-prio').value;
-  const tech=document.getElementById('new-task-tech').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const status=document.getElementById('new-task-status').value;
+  const dur=document.getElementById('new-task-dur').value.trim();
+  const start=document.getElementById('new-task-start').value;
+  const end=document.getElementById('new-task-end').value;
+  const cost=parseFloat(document.getElementById('new-task-cost').value)||0;
   const req=document.getElementById('new-task-req').value.trim();
-  const start=document.getElementById('new-task-start').value.trim();
+  const desc=document.getElementById('new-task-desc').value.trim();
+  const note=document.getElementById('new-task-note').value.trim();
+  const tech=[..._selectedTech];
   if(!title){alert('Escreve o título da tarefa');return;}
   await addDoc(collection(db,'tasks'),{
-    title, unit, tech, start, prio, req, status:'Pendente',
-    end:'', dur:'', note:'', photos:[], createdAt:serverTimestamp()
+    title, unit, prio, status, tech, start, end, dur, cost, req, desc, note,
+    photos:[], createdAt:serverTimestamp()
   });
   document.getElementById('new-task-modal').style.display='none';
-  ['new-task-title','new-task-tech','new-task-req','new-task-start'].forEach(id=>{document.getElementById(id).value='';});
+  _selectedTech.clear();
+  document.querySelectorAll('.tech-chip-active').forEach(c=>c.classList.remove('tech-chip-active'));
+  document.getElementById('photos-preview').innerHTML='';
+  ['new-task-title','new-task-dur','new-task-start','new-task-end','new-task-req','new-task-desc','new-task-note','new-task-custom-tech'].forEach(id=>{
+    const el=document.getElementById(id); if(el) el.value='';
+  });
+  document.getElementById('new-task-cost').value='0';
 };
 
 /* ── seed initial data if collection is empty ── */
@@ -655,6 +710,9 @@ input,select,textarea{padding:8px 12px;border:1px solid #e2e8f0;border-radius:8p
 input:focus,select:focus,textarea:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.1)}
 label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:600}
 .form-group{margin-bottom:14px}
+.tech-chip{display:inline-flex;align-items:center;padding:6px 14px;border-radius:20px;background:#f1f5f9;color:#475569;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;user-select:none;border:2px solid transparent}
+.tech-chip:hover{background:#e2e8f0;color:#334155}
+.tech-chip-active{background:linear-gradient(to right,#6366f1,#8b5cf6)!important;color:#fff!important;border-color:transparent!important}
 
 /* CHAT */
 .chat-msg{display:flex;gap:10px;margin-bottom:14px}
@@ -1984,25 +2042,90 @@ function switchAuthTab(tab){
 }
 </script>
 <!-- NOVA TAREFA MODAL -->
-<div id="new-task-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9998;align-items:center;justify-content:center" onclick="if(event.target===this)this.style.display='none'">
-  <div style="background:#fff;border-radius:16px;padding:28px;width:460px;max-width:95vw;box-shadow:0 24px 60px rgba(0,0,0,.2)">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-      <div style="font-size:17px;font-weight:700;color:#0f172a"><i class="ti ti-plus" style="color:#6366f1"></i> Nova Tarefa</div>
-      <span style="cursor:pointer;color:#94a3b8;font-size:20px" onclick="document.getElementById('new-task-modal').style.display='none'">&times;</span>
+<div id="new-task-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)closeNewTaskModal()">
+  <div style="background:#fff;border-radius:18px;width:600px;max-width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,.22);display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 26px 14px;border-bottom:1px solid #f1f5f9;position:sticky;top:0;background:#fff;z-index:2;border-radius:18px 18px 0 0">
+      <div style="font-size:17px;font-weight:700;color:#0f172a"><i class="ti ti-clipboard-plus" style="color:#6366f1;margin-right:6px"></i>Nova Tarefa de Manutenção</div>
+      <span style="cursor:pointer;color:#94a3b8;font-size:22px;line-height:1;padding:2px 6px" onclick="closeNewTaskModal()">&times;</span>
     </div>
-    <div class="form-group"><label>Título *</label><input id="new-task-title" type="text" placeholder="Ex: Reparar janela da sala 3" style="width:100%"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="form-group"><label>Unidade</label><select id="new-task-unit" style="width:100%"><option>BENGUELA</option><option>LOBITO</option><option>CKC</option></select></div>
-      <div class="form-group"><label>Prioridade</label><select id="new-task-prio" style="width:100%"><option>Média</option><option>Alta</option><option>Urgente</option><option>Baixa</option></select></div>
+    <div style="padding:20px 26px;display:flex;flex-direction:column;gap:14px">
+      <div class="form-group" style="margin:0"><label>Título da Tarefa *</label><input id="new-task-title" type="text" placeholder="Ex: Reparação do ar condicionado" style="width:100%"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin:0"><label>Unidade *</label>
+          <select id="new-task-unit" style="width:100%">
+            <option value="BENGUELA">🟢 BENGUELA</option>
+            <option value="LOBITO">🔵 LOBITO</option>
+            <option value="CKC">🟠 CKC</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0"><label>Prioridade</label>
+          <select id="new-task-prio" style="width:100%">
+            <option value="Média">📋 Média</option>
+            <option value="Alta">🔶 Alta</option>
+            <option value="Urgente">🔴 Urgente</option>
+            <option value="Baixa">🟢 Baixa</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin:0"><label>Status</label>
+          <select id="new-task-status" style="width:100%">
+            <option value="Pendente">⏳ Pendente</option>
+            <option value="Em andamento">🔄 Em andamento</option>
+            <option value="Resolvido">✅ Resolvido</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0"><label>Tempo Estimado</label><input id="new-task-dur" type="text" placeholder="Ex: 2 horas, 1 dia" style="width:100%"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin:0"><label>Data de Início</label><input id="new-task-start" type="date" style="width:100%"></div>
+        <div class="form-group" style="margin:0"><label>Data de Término</label><input id="new-task-end" type="date" style="width:100%"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin:0"><label>Custo do Trabalho (Kz)</label><input id="new-task-cost" type="number" value="0" min="0" style="width:100%"></div>
+        <div class="form-group" style="margin:0"><label>Solicitado por</label><input id="new-task-req" type="text" placeholder="Ex: Nancy" style="width:100%"></div>
+      </div>
+      <div class="form-group" style="margin:0"><label>Descrição</label><textarea id="new-task-desc" placeholder="Descreva o trabalho a ser realizado..." style="width:100%;height:72px;resize:vertical"></textarea></div>
+      <div>
+        <label style="font-size:12px;color:#64748b;font-weight:600;display:block;margin-bottom:8px">Atribuir a:</label>
+        <div id="tech-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <span class="tech-chip" onclick="toggleTechChip(this,'Soma')">Soma</span>
+          <span class="tech-chip" onclick="toggleTechChip(this,'Aldair')">Aldair</span>
+          <span class="tech-chip" onclick="toggleTechChip(this,'Sr. Domingos')">Sr. Domingos</span>
+          <span class="tech-chip" onclick="toggleTechChip(this,'Miguel')">Miguel</span>
+          <span class="tech-chip" onclick="toggleTechChip(this,'Condor')">Condor</span>
+          <span class="tech-chip" onclick="toggleTechChip(this,'Domildes')">Domildes</span>
+          <span class="tech-chip" onclick="toggleTechChip(this,'Michael')">Michael</span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <input id="new-task-custom-tech" type="text" placeholder="Adicionar outra pessoa..." style="flex:1">
+          <button class="btn" style="padding:8px 14px;flex-shrink:0" onclick="addCustomTech()"><i class="ti ti-plus"></i></button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <label style="font-size:12px;color:#64748b;font-weight:600;display:block;margin-bottom:6px">Fotos</label>
+          <div onclick="document.getElementById('new-task-photos').click()" style="border:2px dashed #e2e8f0;border-radius:12px;padding:20px;text-align:center;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='#6366f1'" onmouseout="this.style.borderColor='#e2e8f0'">
+            <i class="ti ti-photo" style="font-size:26px;color:#94a3b8;display:block;margin-bottom:4px"></i>
+            <div style="font-size:11px;color:#94a3b8">Clique para adicionar</div>
+          </div>
+          <input id="new-task-photos" type="file" accept="image/*" multiple style="display:none" onchange="previewPhotos(this)">
+          <div id="photos-preview" style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px"></div>
+        </div>
+        <div>
+          <label style="font-size:12px;color:#64748b;font-weight:600;display:block;margin-bottom:6px">Vídeos</label>
+          <div onclick="document.getElementById('new-task-videos').click()" style="border:2px dashed #e2e8f0;border-radius:12px;padding:20px;text-align:center;cursor:pointer;transition:border-color .15s" onmouseover="this.style.borderColor='#6366f1'" onmouseout="this.style.borderColor='#e2e8f0'">
+            <i class="ti ti-video" style="font-size:26px;color:#94a3b8;display:block;margin-bottom:4px"></i>
+            <div style="font-size:11px;color:#94a3b8">Clique para adicionar</div>
+          </div>
+          <input id="new-task-videos" type="file" accept="video/*" multiple style="display:none">
+        </div>
+      </div>
+      <div class="form-group" style="margin:0"><label>Notas Adicionais</label><textarea id="new-task-note" placeholder="Observações extras..." style="width:100%;height:60px;resize:vertical"></textarea></div>
     </div>
-    <div class="form-group"><label>Técnico(s) <span style="font-weight:400;color:#94a3b8">(separar por vírgula)</span></label><input id="new-task-tech" type="text" placeholder="Ex: Miguel, Paulo" style="width:100%"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="form-group"><label>Solicitado por</label><input id="new-task-req" type="text" placeholder="Ex: Nancy" style="width:100%"></div>
-      <div class="form-group"><label>Data início</label><input id="new-task-start" type="text" placeholder="Ex: 16 Jun" style="width:100%"></div>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
-      <button class="btn" onclick="document.getElementById('new-task-modal').style.display='none'">Cancelar</button>
-      <button class="btn btn-primary" onclick="addNewTask()"><i class="ti ti-check"></i> Criar tarefa</button>
+    <div style="display:flex;gap:10px;justify-content:flex-end;padding:14px 26px 20px;border-top:1px solid #f1f5f9;position:sticky;bottom:0;background:#fff;border-radius:0 0 18px 18px">
+      <button class="btn" onclick="closeNewTaskModal()">Cancelar</button>
+      <button class="btn btn-primary" style="padding:10px 28px" onclick="addNewTask()"><i class="ti ti-check"></i> Criar Tarefa</button>
     </div>
   </div>
 </div>
