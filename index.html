@@ -1978,6 +1978,7 @@ function showPage(name) {
   document.querySelectorAll('.nav-item').forEach(item => {
     if (item.dataset.page === name) item.classList.add('active');
   });
+  if (name === 'settings' && typeof refreshTeamTable === 'function') refreshTeamTable();
   window.scrollTo(0, 0);
 }
 var TASKS={
