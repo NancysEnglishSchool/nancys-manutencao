@@ -538,14 +538,16 @@ onAuthStateChanged(auth, async (firebaseUser)=>{
         };
         await setDoc(doc(db,'manutencao_users', firebaseUser.uid), profile);
       } else {
-        // Outro utilizador sem perfil — mostrar mensagem
-        loginPage.style.display   = 'none';
-        appRoot.style.display     = 'none';
-        waitingPage.style.display = 'flex';
-        document.getElementById('waiting-name').textContent = firebaseUser.email;
-        document.getElementById('waiting-msg').textContent  =
-          'A tua conta existe mas ainda não tem perfil configurado. Contacta o administrador para te adicionar em Configurações → Adicionar membro.';
-        return;
+        // Novo utilizador sem perfil — criar documento pending para o admin aprovar
+        const rawName = firebaseUser.displayName || firebaseUser.email.split('@')[0];
+        const initials = rawName.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+        profile = {
+          uid: firebaseUser.uid, name: rawName, email: firebaseUser.email,
+          role: null, initials, color: '#94a3b8', unit: '', status: 'pending',
+          createdAt: serverTimestamp()
+        };
+        await setDoc(doc(db,'manutencao_users', firebaseUser.uid), profile);
+        // Continua para o bloco status:'pending' abaixo
       }
     }
 
