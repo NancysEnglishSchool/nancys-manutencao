@@ -95,6 +95,7 @@ const q = query(collection(db,'tasks'), orderBy('createdAt','asc'));
 onSnapshot(q, snap => {
   allTasks = {};
   snap.forEach(d => { allTasks[d.id] = d.data(); });
+  window._allTasksForReports = Object.values(allTasks);
   renderAllViews();
 });
 
@@ -948,6 +949,399 @@ async function loadDashboardMaterials() {
 }
 window.loadDashboardMaterials = loadDashboardMaterials;
 
+/* ──────────────────────── PROJECTOS ──────────────────────── */
+let _allProjects = [];
+let _currentProjectId = null;
+
+const UNIT_CLASS = { BENGUELA:'unit-b', LOBITO:'unit-l', CKC:'unit-c' };
+const FMT_KZ = n => Number(n||0).toLocaleString('pt-PT') + ' Kz';
+
+async function loadProjects() {
+  try {
+    const snap = await getDocs(collection(db,'projects'));
+    _allProjects = snap.docs.map(d=>({id:d.id,...d.data()}));
+    renderProjectsKanban();
+  } catch(e) { console.error('loadProjects:', e); }
+}
+window.loadProjects = loadProjects;
+
+window.renderProjectsKanban = function() {
+  const unitF = document.getElementById('proj-unit-filter')?.value || '';
+  const cols = { 'Planeado':[], 'Em andamento':[], 'Concluído':[] };
+  _allProjects.forEach(p => {
+    if (unitF && p.unit !== unitF) return;
+    const s = p.status || 'Planeado';
+    if (cols[s]) cols[s].push(p); else cols['Planeado'].push(p);
+  });
+
+  function cardHtml(p) {
+    const budget = Number(p.budget||0);
+    const spent  = Number(p.spent||0);
+    const pct    = budget > 0 ? Math.min(100, Math.round(spent/budget*100)) : 0;
+    const uc = UNIT_CLASS[p.unit] || 'unit-b';
+    return `<div class="kanban-card" onclick="openProjectDetail('${p.id}')">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:4px">
+        <div class="kanban-card-title">${p.title||'—'}</div>
+        <span class="${uc}">${p.unit||'—'}</span>
+      </div>
+      <div class="kanban-card-meta">${p.startDate||'—'} · Resp: ${p.responsible||'—'}</div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+      <div class="kanban-card-footer">
+        <span style="font-size:11px;color:#64748b;font-weight:600">${pct}%</span>
+        <span style="font-size:11px;color:#94a3b8">${budget>0?FMT_KZ(budget):'Orç. a definir'}</span>
+      </div>
+    </div>`;
+  }
+
+  function empty(label) {
+    return `<div style="text-align:center;padding:24px 12px;color:#94a3b8;font-size:12px">
+      <i class="ti ti-inbox" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>
+      ${label}
+    </div>`;
+  }
+
+  const keys = ['Planeado','Em andamento','Concluído'];
+  const colIds = ['pkc-plan','pkc-prog','pkc-done'];
+  const countIds = ['pkc-plan-count','pkc-prog-count','pkc-done-count'];
+  const emptyMsgs = ['Nenhum projecto planeado','Nenhum projecto em andamento','Nenhum projecto concluído'];
+
+  keys.forEach((k,i) => {
+    const el = document.getElementById(colIds[i]);
+    const ci = document.getElementById(countIds[i]);
+    if (!el) return;
+    const items = cols[k];
+    if (ci) ci.textContent = items.length;
+    el.innerHTML = items.length ? items.map(cardHtml).join('') : empty(emptyMsgs[i]);
+  });
+};
+
+window.openProjectModal = function(id) {
+  _currentProjectId = null;
+  const modal = document.getElementById('project-modal');
+  if (!modal) return;
+  document.getElementById('proj-edit-id').value = '';
+  document.getElementById('proj-title').value = '';
+  document.getElementById('proj-unit').value = 'BENGUELA';
+  document.getElementById('proj-status').value = 'Planeado';
+  document.getElementById('proj-responsible').value = '';
+  document.getElementById('proj-start').value = '';
+  document.getElementById('proj-budget').value = '';
+  document.getElementById('proj-spent').value = '';
+  document.getElementById('proj-desc').value = '';
+  document.getElementById('project-modal-title').textContent = 'Novo Projecto';
+  if (id) {
+    const p = _allProjects.find(x=>x.id===id);
+    if (p) {
+      document.getElementById('proj-edit-id').value = p.id;
+      document.getElementById('proj-title').value = p.title||'';
+      document.getElementById('proj-unit').value = p.unit||'BENGUELA';
+      document.getElementById('proj-status').value = p.status||'Planeado';
+      document.getElementById('proj-responsible').value = p.responsible||'';
+      document.getElementById('proj-start').value = p.startDate||'';
+      document.getElementById('proj-budget').value = p.budget||'';
+      document.getElementById('proj-spent').value = p.spent||'';
+      document.getElementById('proj-desc').value = p.description||'';
+      document.getElementById('project-modal-title').textContent = 'Editar Projecto';
+    }
+  }
+  modal.style.display = 'flex';
+};
+
+window.closeProjectModal = function() {
+  const modal = document.getElementById('project-modal');
+  if (modal) modal.style.display = 'none';
+};
+
+window.saveProject = async function() {
+  const title = (document.getElementById('proj-title')?.value||'').trim();
+  if (!title) { alert('O título é obrigatório.'); return; }
+  const editId = document.getElementById('proj-edit-id')?.value||'';
+  const data = {
+    title,
+    unit: document.getElementById('proj-unit')?.value||'BENGUELA',
+    status: document.getElementById('proj-status')?.value||'Planeado',
+    responsible: document.getElementById('proj-responsible')?.value||'',
+    startDate: document.getElementById('proj-start')?.value||'',
+    budget: Number(document.getElementById('proj-budget')?.value||0),
+    spent: Number(document.getElementById('proj-spent')?.value||0),
+    description: document.getElementById('proj-desc')?.value||'',
+    updatedAt: new Date().toISOString()
+  };
+  const btn = document.getElementById('proj-save-btn');
+  if (btn) btn.disabled = true;
+  try {
+    if (editId) {
+      await setDoc(doc(db,'projects',editId), data, {merge:true});
+    } else {
+      data.createdAt = new Date().toISOString();
+      await addDoc(collection(db,'projects'), data);
+    }
+    window.closeProjectModal();
+    await loadProjects();
+  } catch(e) { alert('Erro: '+e.message); }
+  finally { if (btn) btn.disabled = false; }
+};
+
+window.openProjectDetail = function(id) {
+  const p = _allProjects.find(x=>x.id===id);
+  if (!p) return;
+  _currentProjectId = id;
+
+  const budget = Number(p.budget||0);
+  const spent  = Number(p.spent||0);
+  const balance = budget - spent;
+  const pct = budget > 0 ? Math.min(100, Math.round(spent/budget*100)) : 0;
+  const uc = UNIT_CLASS[p.unit] || 'unit-b';
+
+  const set = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
+  const setHTML = (id, val) => { const el=document.getElementById(id); if(el) el.innerHTML=val; };
+
+  set('pd-title', p.title||'—');
+  set('pd-sub', `Responsável: ${p.responsible||'—'} · Início: ${p.startDate||'—'}`);
+  set('pd-budget', FMT_KZ(budget));
+  set('pd-spent', FMT_KZ(spent));
+  set('pd-balance', FMT_KZ(balance));
+  set('pd-progress', pct + '%');
+  set('pd-desc', p.description||'Sem descrição.');
+  set('pd-info-unit', p.unit||'—');
+  set('pd-info-resp', p.responsible||'—');
+  set('pd-info-start', p.startDate||'—');
+  set('pd-info-status', p.status||'—');
+
+  const unitBadge = document.getElementById('pd-unit-badge');
+  if (unitBadge) { unitBadge.textContent = p.unit||'—'; unitBadge.className = uc; }
+
+  const statusPill = document.getElementById('pd-status-pill');
+  if (statusPill) {
+    statusPill.textContent = p.status||'—';
+    const cls = p.status==='Concluído' ? 'pill-green' : p.status==='Em andamento' ? 'pill-blue' : 'pill-gray';
+    statusPill.className = 'pill ' + cls;
+  }
+
+  const bar = document.getElementById('pd-progress-bar');
+  if (bar) bar.style.width = pct + '%';
+
+  showPage('projectdetail');
+};
+
+window.editCurrentProject = function() {
+  if (_currentProjectId) window.openProjectModal(_currentProjectId);
+};
+
+window.deleteCurrentProject = async function() {
+  if (!_currentProjectId) return;
+  const p = _allProjects.find(x=>x.id===_currentProjectId);
+  if (!confirm(`Apagar o projecto "${p?.title||'este projecto'}"?`)) return;
+  try {
+    await deleteDoc(doc(db,'projects',_currentProjectId));
+    _currentProjectId = null;
+    await loadProjects();
+    showPage('projects');
+  } catch(e) { alert('Erro: '+e.message); }
+};
+
+/* ──────────────────────── CHAT ──────────────────────── */
+let _chatChannel = 'geral';
+let _chatUnsub = null;
+const CHANNEL_DESC = { geral:'Equipa toda', benguela:'Unidade BENGUELA', lobito:'Unidade LOBITO', ckc:'Unidade CKC' };
+const CHANNEL_COLORS = ['#6366f1','#0d9488','#dc2626','#059669','#f59e0b','#7c3aed','#0369a1','#be185d'];
+
+function chatColorForUid(uid) {
+  let h = 0; for (let i=0; i<uid.length; i++) h = (h*31 + uid.charCodeAt(i)) >>> 0;
+  return CHANNEL_COLORS[h % CHANNEL_COLORS.length];
+}
+
+function initials(name) {
+  if (!name) return '?';
+  return name.trim().split(/\s+/).map(w=>w[0]).join('').toUpperCase().slice(0,2);
+}
+
+function fmtChatTime(ts) {
+  if (!ts) return '';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleDateString('pt-PT',{day:'2-digit',month:'short'}) + ' · ' +
+         d.toLocaleTimeString('pt-PT',{hour:'2-digit',minute:'2-digit'});
+}
+
+function subscribeChat(channel) {
+  if (_chatUnsub) { _chatUnsub(); _chatUnsub = null; }
+  const q = query(collection(db,'manutencao_chat'), orderBy('timestamp','asc'));
+  _chatUnsub = onSnapshot(q, snap => {
+    const msgs = snap.docs.map(d=>({id:d.id,...d.data()}))
+                          .filter(m=>m.channel===channel);
+    const box = document.getElementById('chat-messages');
+    if (!box) return;
+    if (!msgs.length) {
+      box.innerHTML = '<div style="text-align:center;color:#94a3b8;font-size:13px;padding:32px 0">Sem mensagens neste canal. Seja o primeiro!</div>';
+      return;
+    }
+    const myUid = auth.currentUser?.uid;
+    box.innerHTML = msgs.map(m => {
+      const mine = m.uid === myUid;
+      const col = m.color || chatColorForUid(m.uid||'');
+      const ini = m.initials || initials(m.name);
+      return `<div class="chat-msg${mine?' mine':''}">
+        <div class="chat-avatar" style="background:${col}">${ini}</div>
+        <div>
+          <div class="chat-sender"${mine?' style="text-align:right"':''}>${mine?'Eu':m.name||'—'}</div>
+          <div class="chat-bubble">${(m.text||'').replace(/</g,'&lt;')}</div>
+          <div class="chat-time"${mine?' style="text-align:right"':''}>${fmtChatTime(m.timestamp)}</div>
+        </div>
+      </div>`;
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  });
+}
+
+window.switchChannel = function(ch) {
+  _chatChannel = ch;
+  document.querySelectorAll('.chat-channel-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.ch === ch);
+  });
+  const title = document.getElementById('chat-channel-title');
+  const desc  = document.getElementById('chat-channel-desc');
+  const input = document.getElementById('chat-input');
+  if (title) title.textContent = '# ' + ch;
+  if (desc)  desc.textContent  = CHANNEL_DESC[ch] || ch;
+  if (input) input.placeholder = `Escrever mensagem em #${ch}…`;
+  subscribeChat(ch);
+};
+
+window.sendChatMessage = async function() {
+  const input = document.getElementById('chat-input');
+  const text  = (input?.value||'').trim();
+  if (!text) return;
+  const user = auth.currentUser;
+  if (!user) return;
+  input.value = '';
+  input.disabled = true;
+  try {
+    const profile = window._currentUserProfile || {};
+    await addDoc(collection(db,'manutencao_chat'), {
+      text,
+      uid: user.uid,
+      name: profile.name || user.displayName || user.email?.split('@')[0] || '?',
+      initials: initials(profile.name || user.displayName || '?'),
+      color: chatColorForUid(user.uid),
+      channel: _chatChannel,
+      timestamp: serverTimestamp()
+    });
+  } catch(e) { alert('Erro ao enviar: '+e.message); }
+  finally { input.disabled = false; input.focus(); }
+};
+
+function initChat() {
+  subscribeChat(_chatChannel);
+}
+window.initChat = initChat;
+
+/* ──────────────────────── RELATÓRIOS ──────────────────────── */
+window.renderReports = function() {
+  const unit = document.getElementById('rep-unit-filter')?.value || '';
+
+  // tasks (from allTasks set by onSnapshot)
+  const tasks = (window._allTasksForReports || []);
+  const tFiltered = unit ? tasks.filter(t=>{
+    const u = (t.unit||'').toUpperCase();
+    return u === unit.toUpperCase() || (unit==='BENGUELA'&&u==='B') ||
+           (unit==='LOBITO'&&u==='L') || (unit==='CKC'&&u==='C') ||
+           (unit==='BENGUELA'&&u==='BENGUELA') || (unit==='LOBITO'&&u==='LOBITO') || (unit==='CKC'&&u==='CKC');
+  }) : tasks;
+
+  const tTotal    = tFiltered.length;
+  const tResolved = tFiltered.filter(t=>(t.status||'')==='Resolvido').length;
+  const tPending  = tFiltered.filter(t=>(t.status||'Pendente')==='Pendente').length;
+  const tInProg   = tFiltered.filter(t=>t.status==='Em andamento').length;
+  const tCancelled= tFiltered.filter(t=>t.status==='Cancelado').length;
+
+  const set = (id,v)=>{ const el=document.getElementById(id); if(el)el.textContent=v; };
+  const setH = (id,v)=>{ const el=document.getElementById(id); if(el)el.innerHTML=v; };
+
+  set('rep-resolved', tResolved);
+  setH('rep-resolved-sub', `<span class="sub-green">de ${tTotal} total</span>`);
+
+  // materials
+  const mats = (_allMaterials||[]).filter(m=>!unit||m.unit===unit);
+  const matCost = mats.reduce((s,m)=>s+Number(m.unitPrice||0)*Number(m.qty||0),0);
+  set('rep-mat-cost', matCost>0 ? FMT_KZ(matCost) : '—');
+  setH('rep-mat-sub', `<span class="sub-blue">${mats.length} material${mats.length!==1?'is':''}</span>`);
+
+  // tools
+  const tools = (_allTools||[]).filter(t=>!unit||t.unit===unit);
+  const toolsGood = tools.filter(t=>t.condition==='Bom').length;
+  set('rep-tools-count', tools.length);
+  setH('rep-tools-sub', `<span class="sub-green">${toolsGood} em bom estado</span>`);
+
+  // projects
+  const projs = _allProjects.filter(p=>!unit||p.unit===unit);
+  const projActive = projs.filter(p=>p.status==='Em andamento').length;
+  set('rep-proj-count', projs.length);
+  setH('rep-proj-sub', `<span class="sub-purple">${projActive} em andamento</span>`);
+
+  // tasks by unit chart
+  const UNITS = ['BENGUELA','LOBITO','CKC'];
+  const UNIT_KEYS = { BENGUELA:['B','BENGUELA','b','benguela'], LOBITO:['L','LOBITO','l','lobito'], CKC:['CKC','ckc','C','c'] };
+  const tasksByUnit = UNITS.map(u=>({ u, n: tasks.filter(t=>UNIT_KEYS[u].includes(t.unit||'b')).length }));
+  const maxTU = Math.max(1,...tasksByUnit.map(x=>x.n));
+  const BAR_COLORS = ['linear-gradient(to right,#6366f1,#818cf8)','linear-gradient(to right,#10b981,#0d9488)','linear-gradient(to right,#f59e0b,#ea580c)'];
+  setH('rep-tasks-by-unit', tasksByUnit.map((x,i)=>`
+    <div class="chart-bar-row">
+      <div class="chart-bar-label">${x.u}</div>
+      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${Math.round(x.n/maxTU*100)}%;background:${BAR_COLORS[i]}"></div></div>
+      <div class="chart-bar-val">${x.n} tarefa${x.n!==1?'s':''}</div>
+    </div>`).join(''));
+
+  // tasks by status chart
+  const statuses = [
+    {s:'Resolvido',n:tResolved,col:'linear-gradient(to right,#10b981,#0d9488)'},
+    {s:'Em andamento',n:tInProg,col:'linear-gradient(to right,#3b82f6,#6366f1)'},
+    {s:'Pendente',n:tPending,col:'linear-gradient(to right,#f59e0b,#ea580c)'},
+    {s:'Cancelado',n:tCancelled,col:'linear-gradient(to right,#94a3b8,#64748b)'}
+  ];
+  const maxTS = Math.max(1,...statuses.map(x=>x.n));
+  setH('rep-tasks-by-status', statuses.map(x=>`
+    <div class="chart-bar-row">
+      <div class="chart-bar-label">${x.s}</div>
+      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${Math.round(x.n/maxTS*100)}%;background:${x.col}"></div></div>
+      <div class="chart-bar-val">${x.n}</div>
+    </div>`).join(''));
+
+  // materials by unit
+  const matsByUnit = UNITS.map(u=>({ u, n: (_allMaterials||[]).filter(m=>m.unit===u).length }));
+  const maxMU = Math.max(1,...matsByUnit.map(x=>x.n));
+  setH('rep-mats-by-unit', matsByUnit.map((x,i)=>`
+    <div class="chart-bar-row">
+      <div class="chart-bar-label">${x.u}</div>
+      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${Math.round(x.n/maxMU*100)}%;background:${BAR_COLORS[i]}"></div></div>
+      <div class="chart-bar-val">${x.n} item${x.n!==1?'ns':''}</div>
+    </div>`).join(''));
+
+  // tools by condition
+  const conds = ['Bom','Regular','Danificado','Perdido'];
+  const condColors = ['linear-gradient(to right,#10b981,#0d9488)','linear-gradient(to right,#f59e0b,#d97706)','linear-gradient(to right,#ef4444,#dc2626)','linear-gradient(to right,#94a3b8,#64748b)'];
+  const toolsByCond = conds.map(c=>({ c, n: (_allTools||[]).filter(t=>t.condition===c).length })).filter(x=>x.n>0);
+  const maxTC = Math.max(1,...toolsByCond.map(x=>x.n));
+  setH('rep-tools-by-cond', toolsByCond.length ? toolsByCond.map((x,i)=>`
+    <div class="chart-bar-row">
+      <div class="chart-bar-label">${x.c}</div>
+      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${Math.round(x.n/maxTC*100)}%;background:${condColors[conds.indexOf(x.c)]}"></div></div>
+      <div class="chart-bar-val">${x.n} ferramenta${x.n!==1?'s':''}</div>
+    </div>`).join('') : '<div style="color:#94a3b8;font-size:13px">Sem ferramentas registadas.</div>');
+
+  // projects chart
+  const projChartData = _allProjects.filter(p=>!unit||p.unit===unit);
+  const maxPS = Math.max(1,...projChartData.map(p=>Number(p.budget||p.spent||1)));
+  setH('rep-projects-chart', projChartData.length ? projChartData.map(p=>{
+    const budget=Number(p.budget||0), spent=Number(p.spent||0);
+    const pct = Math.round(spent/Math.max(1,maxPS)*100);
+    return `<div class="chart-bar-row">
+      <div class="chart-bar-label" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${p.title||''}">${p.title||'—'}</div>
+      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${pct}%"></div></div>
+      <div class="chart-bar-val">${budget>0?FMT_KZ(spent)+' / '+FMT_KZ(budget):spent>0?FMT_KZ(spent):'A definir'}</div>
+    </div>`;
+  }).join('') : '<div style="color:#94a3b8;font-size:13px">Sem projectos registados.</div>');
+};
+
 onAuthStateChanged(auth, async (firebaseUser)=>{
   const loginPage   = document.getElementById('login-page');
   const appRoot     = document.getElementById('app-root');
@@ -1004,9 +1398,11 @@ onAuthStateChanged(auth, async (firebaseUser)=>{
       document.getElementById('sidebar-user-name').textContent = profile.name;
       document.getElementById('sidebar-user-role').textContent = ROLE_LABELS[profile.role] || profile.role;
       if(profile.color) document.getElementById('sidebar-user-avatar').style.background = profile.color;
+      window._currentUserProfile = profile;
       applyRoleRestrictions(profile.role);
       if(profile.role === 'admin') refreshTeamTable();
       loadDashboardMaterials();
+      if(typeof initChat === 'function') initChat();
       appRoot.style.display = 'flex';
     }
   } else {
@@ -1151,6 +1547,9 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
 .tech-chip-active{background:linear-gradient(to right,#6366f1,#8b5cf6)!important;color:#fff!important;border-color:transparent!important}
 
 /* CHAT */
+.chat-channel-item{padding:9px 12px;border-radius:8px;font-size:13px;color:#64748b;cursor:pointer;margin-bottom:2px;transition:background .15s}
+.chat-channel-item:hover{background:#f1f5f9}
+.chat-channel-item.active{background:#eef2ff;color:#3730a3;font-weight:600}
 .chat-msg{display:flex;gap:10px;margin-bottom:14px}
 .chat-avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#9333ea);display:flex;align-items:center;justify-content:center;color:#fff;font-size:11px;flex-shrink:0;font-weight:700}
 .chat-bubble{background:#f1f5f9;border-radius:0 12px 12px 12px;padding:9px 13px;font-size:13px;max-width:420px;color:#334155;line-height:1.55}
@@ -1595,229 +1994,109 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
       <div class="topbar">
         <div>
           <div class="page-title">Projectos</div>
-          <div class="page-sub">Gestão de obras e remodelações · 3 projectos</div>
+          <div class="page-sub" id="projects-sub">Gestão de obras e remodelações</div>
         </div>
         <div style="display:flex;gap:8px">
-          <select style="width:130px">
-            <option>Todas as unidades</option>
-            <option>BENGUELA</option>
-            <option>LOBITO</option>
-            <option>CKC</option>
+          <select id="proj-unit-filter" style="width:130px" onchange="renderProjectsKanban()">
+            <option value="">Todas as unidades</option>
+            <option>BENGUELA</option><option>LOBITO</option><option>CKC</option>
           </select>
-          <button class="btn btn-primary"><i class="ti ti-plus"></i> Novo projecto</button>
+          <button class="btn btn-primary" onclick="openProjectModal()"><i class="ti ti-plus"></i> Novo projecto</button>
         </div>
       </div>
       <div class="kanban">
         <div class="kanban-col">
-          <div class="kanban-col-header">
-            <div class="kanban-col-title">Planeado</div>
-            <span class="kanban-count">1</span>
-          </div>
-          <div class="kanban-card" onclick="showPage('projectdetail')">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:4px">
-              <div class="kanban-card-title">Escritório da Directora</div>
-              <span class="unit-b">BENGUELA</span>
-            </div>
-            <div class="kanban-card-meta">21 Mar → 29 Mar 2026 · Resp: —</div>
-            <div class="progress-bar"><div class="progress-fill" style="width:0%;background:#94a3b8"></div></div>
-            <div class="kanban-card-footer">
-              <span style="font-size:11px;color:#94a3b8">0% · Orç. a definir</span>
-              <span class="pill pill-gray" style="font-size:10px">Planeamento</span>
-            </div>
-          </div>
+          <div class="kanban-col-header"><div class="kanban-col-title">Planeado</div><span class="kanban-count" id="pkc-plan-count">0</span></div>
+          <div id="pkc-plan"><div style="text-align:center;padding:24px 12px;color:#94a3b8;font-size:12px">A carregar…</div></div>
         </div>
-
         <div class="kanban-col">
-          <div class="kanban-col-header">
-            <div class="kanban-col-title">Em andamento</div>
-            <span class="kanban-count" style="background:#fef3c7;color:#92400e">2</span>
-          </div>
-          <div class="kanban-card" onclick="showPage('projectdetail')">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:4px">
-              <div class="kanban-card-title">NOVA CASA - LOBITO</div>
-              <span class="unit-l">LOBITO</span>
-            </div>
-            <div class="kanban-card-meta">6 Jan 2026 · Resp: Soma</div>
-            <div class="progress-bar"><div class="progress-fill" style="width:70%"></div></div>
-            <div class="kanban-card-footer">
-              <span style="font-size:11px;color:#64748b;font-weight:600">70%</span>
-              <span style="font-size:11px;color:#94a3b8">17.628.000 / 25.000.000 Kz</span>
-            </div>
-          </div>
-          <div class="kanban-card" onclick="showPage('projectdetail')">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:4px">
-              <div class="kanban-card-title">Construção de 2 Novas Salas</div>
-              <span class="unit-c">CKC</span>
-            </div>
-            <div class="kanban-card-meta">Nov 2024 · Resp: Soma</div>
-            <div class="progress-bar"><div class="progress-fill" style="width:30%;background:linear-gradient(to right,#f59e0b,#ea580c)"></div></div>
-            <div class="kanban-card-footer">
-              <span style="font-size:11px;color:#64748b;font-weight:600">30%</span>
-              <span style="font-size:11px;color:#94a3b8">Orç. 5.000.000 Kz</span>
-            </div>
-          </div>
+          <div class="kanban-col-header"><div class="kanban-col-title">Em andamento</div><span class="kanban-count" style="background:#fef3c7;color:#92400e" id="pkc-prog-count">0</span></div>
+          <div id="pkc-prog"><div style="text-align:center;padding:24px 12px;color:#94a3b8;font-size:12px">A carregar…</div></div>
         </div>
-
         <div class="kanban-col">
-          <div class="kanban-col-header">
-            <div class="kanban-col-title">Concluído</div>
-            <span class="kanban-count" style="background:#dcfce7;color:#166534">0</span>
-          </div>
-          <div style="text-align:center;padding:24px 12px;color:#94a3b8;font-size:12px">
-            <i class="ti ti-check" style="font-size:28px;display:block;margin-bottom:8px;opacity:.4"></i>
-            Nenhum projecto concluído
-          </div>
+          <div class="kanban-col-header"><div class="kanban-col-title">Concluído</div><span class="kanban-count" style="background:#dcfce7;color:#166534" id="pkc-done-count">0</span></div>
+          <div id="pkc-done"><div style="text-align:center;padding:24px 12px;color:#94a3b8;font-size:12px">A carregar…</div></div>
         </div>
       </div>
     </div>
 
-    <!-- ==================== DETALHE PROJECTO (NOVA CASA LOBITO) ==================== -->
+    <!-- Modal Novo/Editar Projecto -->
+    <div id="project-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)closeProjectModal()">
+      <div style="background:#fff;border-radius:18px;width:560px;max-width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,.18)">
+        <div style="position:sticky;top:0;background:#fff;padding:20px 24px 16px;border-bottom:1px solid #f1f5f9;border-radius:18px 18px 0 0;display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:17px;font-weight:700;color:#0f172a" id="project-modal-title">Novo Projecto</div>
+          <button onclick="closeProjectModal()" style="background:none;border:none;cursor:pointer;font-size:20px;color:#94a3b8;line-height:1">×</button>
+        </div>
+        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+          <input type="hidden" id="proj-edit-id">
+          <div class="form-group"><label>Título *</label><input type="text" id="proj-title" placeholder="Nome do projecto" style="width:100%"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>Unidade</label>
+              <select id="proj-unit" style="width:100%"><option>BENGUELA</option><option>LOBITO</option><option>CKC</option></select>
+            </div>
+            <div class="form-group"><label>Estado</label>
+              <select id="proj-status" style="width:100%"><option>Planeado</option><option>Em andamento</option><option>Concluído</option></select>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>Responsável</label><input type="text" id="proj-responsible" placeholder="Ex: Soma" style="width:100%"></div>
+            <div class="form-group"><label>Data de início</label><input type="date" id="proj-start" style="width:100%"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>Orçamento (Kz)</label><input type="number" id="proj-budget" placeholder="0" min="0" style="width:100%"></div>
+            <div class="form-group"><label>Gasto até agora (Kz)</label><input type="number" id="proj-spent" placeholder="0" min="0" style="width:100%"></div>
+          </div>
+          <div class="form-group"><label>Descrição</label><textarea id="proj-desc" rows="3" placeholder="Descrição do projecto…" style="width:100%;resize:vertical"></textarea></div>
+        </div>
+        <div style="position:sticky;bottom:0;background:#fff;padding:16px 24px;border-top:1px solid #f1f5f9;border-radius:0 0 18px 18px;display:flex;gap:10px;justify-content:flex-end">
+          <button class="btn btn-sm" onclick="closeProjectModal()">Cancelar</button>
+          <button class="btn btn-primary btn-sm" id="proj-save-btn" onclick="saveProject()"><i class="ti ti-device-floppy"></i> Guardar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== DETALHE PROJECTO ==================== -->
     <div class="page" id="page-projectdetail">
       <div class="topbar">
         <div style="display:flex;align-items:center;gap:12px">
           <button class="btn btn-sm" onclick="showPage('projects')"><i class="ti ti-arrow-left"></i> Projectos</button>
           <div>
             <div style="display:flex;align-items:center;gap:8px">
-              <div class="page-title">NOVA CASA - LOBITO</div>
-              <span class="unit-l">LOBITO</span>
-              <span class="pill pill-blue">Em andamento</span>
+              <div class="page-title" id="pd-title">—</div>
+              <span id="pd-unit-badge" class="unit-b">—</span>
+              <span id="pd-status-pill" class="pill pill-blue">—</span>
             </div>
-            <div class="page-sub">Responsável: Soma · Início: 6 Jan 2026</div>
+            <div class="page-sub" id="pd-sub">—</div>
           </div>
         </div>
         <div style="display:flex;gap:8px">
-          <button class="btn btn-sm"><i class="ti ti-download"></i> Exportar</button>
-          <button class="btn btn-sm btn-primary"><i class="ti ti-plus"></i> Adicionar despesa</button>
+          <button class="btn btn-sm admin-only" onclick="editCurrentProject()"><i class="ti ti-edit"></i> Editar</button>
+          <button class="btn btn-sm admin-only" style="color:#ef4444" onclick="deleteCurrentProject()"><i class="ti ti-trash"></i> Apagar</button>
         </div>
       </div>
-
       <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-label">Orçamento estimado</div>
-          <div class="stat-value" style="font-size:20px">25.000.000 Kz</div>
-          <div class="stat-sub"><span class="sub-blue">Aprovado por Nancy/Chris</span></div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Total gasto</div>
-          <div class="stat-value" style="font-size:20px;color:#ef4444">17.628.000 Kz</div>
-          <div class="stat-sub"><span class="sub-red">70.5% do orçamento</span></div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-label">Saldo disponível</div>
-          <div class="stat-value" style="font-size:20px;color:#16a34a">7.372.000 Kz</div>
-          <div class="stat-sub"><span class="sub-green">29.5% restante</span></div>
-        </div>
+        <div class="stat-card"><div class="stat-label">Orçamento</div><div class="stat-value" id="pd-budget" style="font-size:20px">—</div></div>
+        <div class="stat-card"><div class="stat-label">Total gasto</div><div class="stat-value" id="pd-spent" style="font-size:20px;color:#ef4444">—</div></div>
+        <div class="stat-card"><div class="stat-label">Saldo disponível</div><div class="stat-value" id="pd-balance" style="font-size:20px;color:#16a34a">—</div></div>
         <div class="stat-card">
           <div class="stat-label">Progresso</div>
-          <div class="stat-value" style="font-size:20px">70%</div>
-          <div class="progress-bar" style="margin-top:10px"><div class="progress-fill" style="width:70%"></div></div>
+          <div class="stat-value" id="pd-progress" style="font-size:20px">—</div>
+          <div class="progress-bar" style="margin-top:10px"><div class="progress-fill" id="pd-progress-bar" style="width:0%"></div></div>
         </div>
       </div>
-
       <div class="grid-2">
         <div class="card">
-          <div class="card-title">Despesas por categoria <i class="ti ti-chart-pie"></i></div>
-          <div class="chart-bar-wrap">
-            <div class="chart-bar-row"><div class="chart-bar-label">Compra do Gerador</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:91%"></div></div><div class="chart-bar-val">16.000.000 Kz</div></div>
-            <div class="chart-bar-row"><div class="chart-bar-label">Cabos + Inversor</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:5%;background:#f59e0b"></div></div><div class="chart-bar-val">900.000 Kz</div></div>
-            <div class="chart-bar-row"><div class="chart-bar-label">Transp. Gerador</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:3%;background:#10b981"></div></div><div class="chart-bar-val">600.000 Kz</div></div>
-            <div class="chart-bar-row"><div class="chart-bar-label">Alimentação/Comb.</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:0.5%;background:#ec4899"></div></div><div class="chart-bar-val">80.000 Kz</div></div>
-            <div class="chart-bar-row"><div class="chart-bar-label">Estaferos</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:0.2%;background:#8b5cf6"></div></div><div class="chart-bar-val">24.000 Kz</div></div>
-            <div class="chart-bar-row"><div class="chart-bar-label">Combustível viagem</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:0.2%;background:#94a3b8"></div></div><div class="chart-bar-val">24.000 Kz</div></div>
-          </div>
+          <div class="card-title">Descrição <i class="ti ti-info-circle"></i></div>
+          <p id="pd-desc" style="font-size:14px;color:#475569;line-height:1.7;margin:0">—</p>
         </div>
         <div class="card">
-          <div class="card-title">Informações do projecto <i class="ti ti-info-circle"></i></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px;margin-bottom:14px">
-            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Unidade</div><div style="font-weight:700"><span class="unit-l">LOBITO</span></div></div>
-            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Responsável</div><div style="font-weight:700">Soma</div></div>
-            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Data início</div><div style="font-weight:700">6 Jan 2026</div></div>
-            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Data fim prev.</div><div style="font-weight:700">23 Jan 2026</div></div>
+          <div class="card-title">Informações <i class="ti ti-list-details"></i></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px">
+            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Unidade</div><div id="pd-info-unit" style="font-weight:700">—</div></div>
+            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Responsável</div><div id="pd-info-resp" style="font-weight:700">—</div></div>
+            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Data início</div><div id="pd-info-start" style="font-weight:700">—</div></div>
+            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Estado</div><div id="pd-info-status" style="font-weight:700">—</div></div>
           </div>
-          <div style="display:flex;gap:8px">
-            <div style="flex:1;padding:10px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;text-align:center">
-              <div style="font-size:11px;color:#16a34a;font-weight:700;margin-bottom:2px">APROVADO POR</div>
-              <div style="font-size:13px;font-weight:700;color:#0f172a">Nancy &amp; Chris</div>
-            </div>
-            <div style="flex:1;padding:10px;background:#f0f9ff;border-radius:8px;border:1px solid #bae6fd;text-align:center">
-              <div style="font-size:11px;color:#0369a1;font-weight:700;margin-bottom:2px">FACTURAS ENTREGUES A</div>
-              <div style="font-size:13px;font-weight:700;color:#0f172a">Teté / Domingos</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="card" style="overflow-x:auto">
-        <div class="card-title" style="margin-bottom:16px">
-          Registo de despesas
-          <button class="btn btn-sm btn-primary"><i class="ti ti-plus"></i> Adicionar</button>
-        </div>
-        <table><thead><tr><th>Descrição</th><th>Categoria</th><th>Total (Kz)</th><th>Fornecedor</th><th>Comprado por</th><th>Data</th><th>Pagamento</th><th>Factura</th></tr></thead>
-        <tbody>
-          <tr>
-            <td style="font-weight:600">Compra de Gerador</td>
-            <td><span class="pill pill-gray" style="font-size:10px">Electricidade</span></td>
-            <td style="font-weight:700">16.000.000 Kz</td>
-            <td>Anônimo</td>
-            <td>Apolinário</td>
-            <td>12 Jan 2026</td>
-            <td><span class="pill pill-purple" style="font-size:10px">Transferência</span></td>
-            <td><span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">70m cabos trifásicos 25A + inversor 100A</td>
-            <td><span class="pill pill-gray" style="font-size:10px">Mat. construção</span></td>
-            <td style="font-weight:700">900.000 Kz</td>
-            <td>Mercado</td>
-            <td>Apolinário e Soma</td>
-            <td>12 Jan 2026</td>
-            <td><span class="pill pill-purple" style="font-size:10px">Transferência</span></td>
-            <td><span class="inv-pend"><i class="ti ti-x" style="font-size:10px"></i> Pendente</span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Transporte do Gerador</td>
-            <td><span class="pill pill-gray" style="font-size:10px">Electricidade</span></td>
-            <td style="font-weight:700">600.000 Kz</td>
-            <td>Anônimo</td>
-            <td>Apolinário</td>
-            <td>12 Jan 2026</td>
-            <td><span class="pill pill-purple" style="font-size:10px">Transferência</span></td>
-            <td><span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Alimentação e combustível (Apolinário)</td>
-            <td><span class="pill pill-gray" style="font-size:10px">Electricidade</span></td>
-            <td style="font-weight:700">80.000 Kz</td>
-            <td>LUANDA-BENGUELA</td>
-            <td>Apolinário</td>
-            <td>12 Jan 2026</td>
-            <td><span class="pill pill-blue" style="font-size:10px">Dinheiro</span></td>
-            <td><span class="inv-pend"><i class="ti ti-x" style="font-size:10px"></i> Pendente</span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">3 Estaferos — transporte do Gerador</td>
-            <td><span class="pill pill-gray" style="font-size:10px">Electricidade</span></td>
-            <td style="font-weight:700">24.000 Kz</td>
-            <td>Rua</td>
-            <td>Apolinário</td>
-            <td>15 Jan 2026</td>
-            <td><span class="pill pill-blue" style="font-size:10px">Dinheiro</span></td>
-            <td><span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Combustível 2 viagens Benguela–Lobito</td>
-            <td><span class="pill pill-gray" style="font-size:10px">Electricidade</span></td>
-            <td style="font-weight:700">24.000 Kz</td>
-            <td>Pumangol</td>
-            <td>Apolinário</td>
-            <td>12 Jan 2026</td>
-            <td><span class="pill pill-blue" style="font-size:10px">Dinheiro</span></td>
-            <td><span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span></td>
-          </tr>
-        </tbody></table>
-        <div style="padding:14px;border-top:1px solid #f1f5f9;display:flex;justify-content:flex-end;gap:8px;font-size:13px">
-          <span style="color:#64748b">Total gastos:</span>
-          <strong style="color:#0f172a">17.628.000 Kz</strong>
         </div>
       </div>
     </div>
@@ -1962,68 +2241,30 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
       <div class="topbar">
         <div>
           <div class="page-title">Chat</div>
-          <div class="page-sub">Comunicação da equipa</div>
+          <div class="page-sub" id="chat-sub">Comunicação da equipa</div>
         </div>
       </div>
       <div class="grid-2" style="height:calc(100vh - 140px);min-height:500px">
         <div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column">
           <div style="padding:14px 16px;border-bottom:1px solid #f1f5f9;font-size:13px;font-weight:700;color:#0f172a">Canais</div>
-          <div style="padding:8px">
-            <div style="padding:9px 12px;border-radius:8px;background:#eef2ff;font-size:13px;color:#3730a3;font-weight:600;cursor:pointer;margin-bottom:2px"># geral</div>
-            <div style="padding:9px 12px;border-radius:8px;font-size:13px;color:#64748b;cursor:pointer;margin-bottom:2px"># benguela</div>
-            <div style="padding:9px 12px;border-radius:8px;font-size:13px;color:#64748b;cursor:pointer;margin-bottom:2px"># lobito</div>
-            <div style="padding:9px 12px;border-radius:8px;font-size:13px;color:#64748b;cursor:pointer"># ckc</div>
-          </div>
-          <div style="padding:14px 16px;border-top:1px solid #f1f5f9;border-bottom:1px solid #f1f5f9;font-size:13px;font-weight:700;color:#0f172a">Mensagens directas</div>
-          <div style="padding:8px;overflow-y:auto;flex:1">
-            <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;border-radius:8px;background:#f8fafc"><div class="avatar" style="width:28px;height:28px;font-size:10px;background:#dc2626">MI</div><div style="flex:1"><div style="font-size:13px;font-weight:600">Miguel</div><div style="font-size:10px;color:#94a3b8">Pintura nos quadros em andamento</div></div></div>
-            <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;border-radius:8px"><div class="avatar" style="width:28px;height:28px;font-size:10px;background:#059669">SR</div><div style="flex:1"><div style="font-size:13px;font-weight:600">Sr. Domingos</div><div style="font-size:10px;color:#94a3b8">Espelhos trocados no LOBITO</div></div></div>
-            <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;border-radius:8px"><div class="avatar" style="width:28px;height:28px;font-size:10px;background:#0d9488">SO</div><div style="flex:1"><div style="font-size:13px;font-weight:600">Soma</div><div style="font-size:10px;color:#94a3b8">Materiais AVAC comprados</div></div></div>
+          <div style="padding:8px" id="chat-channels">
+            <div class="chat-channel-item active" data-ch="geral"   onclick="switchChannel('geral')"># geral</div>
+            <div class="chat-channel-item"         data-ch="benguela" onclick="switchChannel('benguela')"># benguela</div>
+            <div class="chat-channel-item"         data-ch="lobito"  onclick="switchChannel('lobito')"># lobito</div>
+            <div class="chat-channel-item"         data-ch="ckc"    onclick="switchChannel('ckc')"># ckc</div>
           </div>
         </div>
         <div class="card" style="padding:0;display:flex;flex-direction:column">
           <div style="padding:14px 16px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:10px">
-            <div style="font-size:15px;font-weight:700;color:#0f172a"># geral</div>
-            <span class="pill pill-gray" style="font-size:10px">Equipa toda</span>
+            <div style="font-size:15px;font-weight:700;color:#0f172a" id="chat-channel-title"># geral</div>
+            <span class="pill pill-gray" style="font-size:10px" id="chat-channel-desc">Equipa toda</span>
           </div>
-          <div style="flex:1;padding:16px;overflow-y:auto">
-            <div class="chat-msg">
-              <div class="chat-avatar" style="background:#dc2626">MI</div>
-              <div>
-                <div class="chat-sender">Miguel · BENGUELA</div>
-                <div class="chat-bubble">A pintura nos quadros já está em andamento. Vou enviar fotos quando terminar.</div>
-                <div class="chat-time">28 Mai · 10:00</div>
-              </div>
-            </div>
-            <div class="chat-msg">
-              <div class="chat-avatar" style="background:#059669">SR</div>
-              <div>
-                <div class="chat-sender">Sr. Domingos · LOBITO</div>
-                <div class="chat-bubble">Troquei os espelhos dos WCs e coloquei porta-toalhas nos WCs dos professores. Também consertei a ventoinha grande de Benguela.</div>
-                <div class="chat-time">25 Mai · 14:30</div>
-              </div>
-            </div>
-            <div class="chat-msg mine">
-              <div class="chat-avatar">NA</div>
-              <div>
-                <div class="chat-sender" style="text-align:right">Nancy Admin</div>
-                <div class="chat-bubble">Excelente Domingos! Podem entregar as facturas à Teté quando tiverem.</div>
-                <div class="chat-time" style="text-align:right">25 Mai · 15:00</div>
-              </div>
-            </div>
-            <div class="chat-msg">
-              <div class="chat-avatar" style="background:#0d9488">SO</div>
-              <div>
-                <div class="chat-sender">Soma · BENGUELA</div>
-                <div class="chat-bubble">Comprei os térmicos, compressor, vareta, comandos e fita Anstrong. Facturas já entregues à Teté.</div>
-                <div class="chat-time">21 Mai · 11:00</div>
-              </div>
-            </div>
+          <div style="flex:1;padding:16px;overflow-y:auto" id="chat-messages">
+            <div style="text-align:center;color:#94a3b8;font-size:13px;padding:32px 0">A carregar mensagens…</div>
           </div>
           <div style="padding:12px 14px;border-top:1px solid #f1f5f9;display:flex;gap:8px">
-            <input type="text" placeholder="Escrever mensagem..." style="flex:1">
-            <button class="btn btn-sm"><i class="ti ti-microphone"></i></button>
-            <button class="btn btn-sm btn-primary"><i class="ti ti-send"></i></button>
+            <input type="text" id="chat-input" placeholder="Escrever mensagem em #geral…" style="flex:1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChatMessage()}">
+            <button class="btn btn-sm btn-primary" onclick="sendChatMessage()"><i class="ti ti-send"></i></button>
           </div>
         </div>
       </div>
@@ -2100,21 +2341,16 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
       <div class="topbar">
         <div>
           <div class="page-title">Relatórios</div>
-          <div class="page-sub">Análise e exportação — Junho 2026</div>
+          <div class="page-sub" id="reports-sub">Resumo geral da operação</div>
         </div>
         <div style="display:flex;gap:8px">
-          <select style="width:130px">
-            <option>Todas as unidades</option>
+          <select id="rep-unit-filter" style="width:150px" onchange="renderReports()">
+            <option value="">Todas as unidades</option>
             <option>BENGUELA</option>
             <option>LOBITO</option>
             <option>CKC</option>
           </select>
-          <select style="width:130px">
-            <option>Junho 2026</option>
-            <option>Maio 2026</option>
-            <option>Abril 2026</option>
-          </select>
-          <button class="btn btn-sm"><i class="ti ti-download"></i> Exportar PDF</button>
+          <button class="btn btn-sm" onclick="renderReports()"><i class="ti ti-refresh"></i> Actualizar</button>
         </div>
       </div>
 
@@ -2122,68 +2358,40 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
         <div class="stat-card">
           <div class="stat-icon" style="background:linear-gradient(135deg,#10b981,#0d9488)"><i class="ti ti-check"></i></div>
           <div class="stat-label">Tarefas resolvidas</div>
-          <div class="stat-value">5</div>
-          <div class="stat-sub"><span class="sub-green">de 8 total</span></div>
+          <div class="stat-value" id="rep-resolved">—</div>
+          <div class="stat-sub" id="rep-resolved-sub">de — total</div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon" style="background:linear-gradient(135deg,#f59e0b,#ea580c)"><i class="ti ti-currency-dollar"></i></div>
+          <div class="stat-icon" style="background:linear-gradient(135deg,#f59e0b,#ea580c)"><i class="ti ti-package"></i></div>
           <div class="stat-label">Custo materiais</div>
-          <div class="stat-value" style="font-size:18px">60.200 Kz</div>
-          <div class="stat-sub"><span class="sub-blue">12 materiais</span></div>
+          <div class="stat-value" id="rep-mat-cost" style="font-size:18px">—</div>
+          <div class="stat-sub" id="rep-mat-sub">— materiais</div>
         </div>
         <div class="stat-card">
-          <div class="stat-icon" style="background:linear-gradient(135deg,#3b82f6,#6366f1)"><i class="ti ti-users"></i></div>
-          <div class="stat-label">Técnicos activos</div>
-          <div class="stat-value">4</div>
-          <div class="stat-sub"><span class="sub-blue">Miguel, Domingos, Paulo, Soma</span></div>
+          <div class="stat-icon" style="background:linear-gradient(135deg,#3b82f6,#6366f1)"><i class="ti ti-tools"></i></div>
+          <div class="stat-label">Ferramentas</div>
+          <div class="stat-value" id="rep-tools-count">—</div>
+          <div class="stat-sub" id="rep-tools-sub">— com bom estado</div>
         </div>
         <div class="stat-card">
           <div class="stat-icon" style="background:linear-gradient(135deg,#6366f1,#9333ea)"><i class="ti ti-folder-kanban"></i></div>
           <div class="stat-label">Projectos activos</div>
-          <div class="stat-value">3</div>
-          <div class="stat-sub"><span class="sub-purple">2 em andamento</span></div>
+          <div class="stat-value" id="rep-proj-count">—</div>
+          <div class="stat-sub" id="rep-proj-sub">— em andamento</div>
         </div>
       </div>
 
       <div class="grid-2">
         <div class="card">
           <div class="card-title">Tarefas por unidade</div>
-          <div class="chart-bar-wrap">
-            <div class="chart-bar-row">
-              <div class="chart-bar-label">BENGUELA</div>
-              <div class="chart-bar-track"><div class="chart-bar-fill" style="width:62%"></div></div>
-              <div class="chart-bar-val">5 tarefas</div>
-            </div>
-            <div class="chart-bar-row">
-              <div class="chart-bar-label">LOBITO</div>
-              <div class="chart-bar-track"><div class="chart-bar-fill" style="width:37%;background:linear-gradient(to right,#10b981,#0d9488)"></div></div>
-              <div class="chart-bar-val">3 tarefas</div>
-            </div>
-            <div class="chart-bar-row">
-              <div class="chart-bar-label">CKC</div>
-              <div class="chart-bar-track"><div class="chart-bar-fill" style="width:0%;background:linear-gradient(to right,#f59e0b,#ea580c)"></div></div>
-              <div class="chart-bar-val">0 tarefas</div>
-            </div>
+          <div class="chart-bar-wrap" id="rep-tasks-by-unit">
+            <div style="color:#94a3b8;font-size:13px">A carregar…</div>
           </div>
         </div>
         <div class="card">
-          <div class="card-title">Gastos projectos (Kz)</div>
-          <div class="chart-bar-wrap">
-            <div class="chart-bar-row">
-              <div class="chart-bar-label">NOVA CASA LOB</div>
-              <div class="chart-bar-track"><div class="chart-bar-fill" style="width:100%"></div></div>
-              <div class="chart-bar-val">17.628.000</div>
-            </div>
-            <div class="chart-bar-row">
-              <div class="chart-bar-label">2 Salas CKC</div>
-              <div class="chart-bar-track"><div class="chart-bar-fill" style="width:28%;background:linear-gradient(to right,#f59e0b,#ea580c)"></div></div>
-              <div class="chart-bar-val">5.000.000 orç.</div>
-            </div>
-            <div class="chart-bar-row">
-              <div class="chart-bar-label">Escritório BNG</div>
-              <div class="chart-bar-track"><div class="chart-bar-fill" style="width:0%;background:#94a3b8"></div></div>
-              <div class="chart-bar-val">A definir</div>
-            </div>
+          <div class="card-title">Tarefas por estado</div>
+          <div class="chart-bar-wrap" id="rep-tasks-by-status">
+            <div style="color:#94a3b8;font-size:13px">A carregar…</div>
           </div>
         </div>
       </div>
@@ -2191,18 +2399,22 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
       <div class="grid-2">
         <div class="card">
           <div class="card-title">Materiais por unidade</div>
-          <div class="chart-bar-wrap">
-            <div class="chart-bar-row"><div class="chart-bar-label">BENGUELA</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:75%"></div></div><div class="chart-bar-val">9 itens</div></div>
-            <div class="chart-bar-row"><div class="chart-bar-label">LOBITO</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:37%;background:linear-gradient(to right,#10b981,#0d9488)"></div></div><div class="chart-bar-val">3 itens</div></div>
-            <div class="chart-bar-row"><div class="chart-bar-label">CKC</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:0%;background:linear-gradient(to right,#f59e0b,#ea580c)"></div></div><div class="chart-bar-val">0 itens</div></div>
+          <div class="chart-bar-wrap" id="rep-mats-by-unit">
+            <div style="color:#94a3b8;font-size:13px">A carregar…</div>
           </div>
         </div>
         <div class="card">
           <div class="card-title">Ferramentas por condição</div>
-          <div class="chart-bar-wrap">
-            <div class="chart-bar-row"><div class="chart-bar-label">Bom</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:50%;background:linear-gradient(to right,#10b981,#0d9488)"></div></div><div class="chart-bar-val">3 ferramentas</div></div>
-            <div class="chart-bar-row"><div class="chart-bar-label">Danificado</div><div class="chart-bar-track"><div class="chart-bar-fill" style="width:50%;background:linear-gradient(to right,#ef4444,#dc2626)"></div></div><div class="chart-bar-val">3 ferramentas</div></div>
+          <div class="chart-bar-wrap" id="rep-tools-by-cond">
+            <div style="color:#94a3b8;font-size:13px">A carregar…</div>
           </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Projectos — gastos vs orçamento</div>
+        <div class="chart-bar-wrap" id="rep-projects-chart">
+          <div style="color:#94a3b8;font-size:13px">A carregar…</div>
         </div>
       </div>
     </div>
@@ -2293,6 +2505,9 @@ function showPage(name) {
   if (name === 'prices'     && typeof loadPrices       === 'function') loadPrices();
   if (name === 'materials'  && typeof loadMaterials    === 'function') loadMaterials();
   if (name === 'tools'      && typeof loadTools        === 'function') loadTools();
+  if (name === 'projects'   && typeof loadProjects     === 'function') loadProjects();
+  if (name === 'chat'       && typeof initChat          === 'function') initChat();
+  if (name === 'reports'    && typeof renderReports    === 'function') renderReports();
   window.scrollTo(0, 0);
 }
 var TASKS={
