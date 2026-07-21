@@ -949,6 +949,29 @@ async function loadDashboardMaterials() {
 }
 window.loadDashboardMaterials = loadDashboardMaterials;
 
+/* ── SEED INICIAL (chamada uma vez pelo admin, depois apagar) ── */
+window.seedInitialData = async function() {
+  const MATS = [
+    {name:'Térmico sprint 12000 BTU', unit:'BENGUELA', qty:1, unitPrice:2200,  buyer:'Soma',        purchaseDate:'2026-05-21', hasInvoice:true,  invoiceReceivedBy:'Teté'},
+    {name:'Térmico sprint 9000 BTU',  unit:'BENGUELA', qty:1, unitPrice:2200,  buyer:'Soma',        purchaseDate:'2026-05-21', hasInvoice:true,  invoiceReceivedBy:'Teté'},
+    {name:'Fita Anstrong',            unit:'BENGUELA', qty:2, unitPrice:3000,  buyer:'Soma',        purchaseDate:'2026-05-21', hasInvoice:true,  invoiceReceivedBy:'Teté'},
+    {name:'Comando universal',        unit:'BENGUELA', qty:3, unitPrice:3700,  buyer:'Soma',        purchaseDate:'2026-05-21', hasInvoice:true,  invoiceReceivedBy:'Teté'},
+    {name:'Vareta',                   unit:'BENGUELA', qty:3, unitPrice:2000,  buyer:'Soma',        purchaseDate:'2026-05-21', hasInvoice:true,  invoiceReceivedBy:'Teté'},
+    {name:'Compressor sprint 9000 BTU',unit:'BENGUELA',qty:1, unitPrice:10700, buyer:'Soma',        purchaseDate:'2026-05-21', hasInvoice:true,  invoiceReceivedBy:'Teté'},
+    {name:'Parafuso',                 unit:'BENGUELA', qty:1, unitPrice:2000,  buyer:'Sr. Domingos',purchaseDate:'',           hasInvoice:false, invoiceReceivedBy:''},
+    {name:'Eletrodos',                unit:'LOBITO',   qty:1, unitPrice:4500,  buyer:'Sr. Domingos',purchaseDate:'',           hasInvoice:false, invoiceReceivedBy:''},
+    {name:'Cantoneira',               unit:'LOBITO',   qty:1, unitPrice:8000,  buyer:'Sr. Domingos',purchaseDate:'',           hasInvoice:false, invoiceReceivedBy:''},
+  ];
+  const PRICES = [
+    {material:'CIMENTO VERMELHO', price:10000, store:'CHINA TOWN', date:'2026-06-01', notes:'ESTAVA EM PROMOÇÃO'},
+  ];
+  try {
+    for (const m of MATS)    await addDoc(collection(db,'materials'), {...m, createdAt:new Date().toISOString()});
+    for (const p of PRICES)  await addDoc(collection(db,'prices'),    {...p, createdAt:new Date().toISOString()});
+    alert('Seed concluído! ' + MATS.length + ' materiais e ' + PRICES.length + ' preço adicionados.');
+  } catch(e) { alert('Erro: ' + e.message); }
+};
+
 /* ──────────────────────── PROJECTOS ──────────────────────── */
 let _allProjects = [];
 let _currentProjectId = null;
