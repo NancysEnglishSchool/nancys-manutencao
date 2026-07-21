@@ -121,6 +121,43 @@ function renderAllViews(){
   // SHEET
   const tbody = document.getElementById('sheet-tbody');
   if(tbody) tbody.innerHTML = tasks.map(([id,t],i)=>sheetRowHTML(t,id,i+1)).join('');
+
+  // DASHBOARD stats
+  const pending    = tasks.filter(([,t])=>(t.status||'Pendente')==='Pendente').length;
+  const inprogress = tasks.filter(([,t])=>t.status==='Em andamento').length;
+  const open       = tasks.filter(([,t])=>t.status!=='Resolvido'&&t.status!=='Cancelado');
+
+  const pendEl = document.getElementById('dash-pending-count');
+  if(pendEl) pendEl.textContent = pending;
+
+  const subEl = document.getElementById('dash-inprogress-sub');
+  if(subEl) subEl.innerHTML = `<span class="sub-amber">${inprogress} em andamento</span>`;
+
+  const badge = document.getElementById('nav-badge-tasks');
+  if(badge) badge.textContent = pending + inprogress;
+
+  const subTitle = document.getElementById('tasks-page-sub');
+  if(subTitle) subTitle.textContent = `Ordens de trabalho das 3 unidades · ${tasks.length} registo${tasks.length!==1?'s':''}`;
+
+  // DASHBOARD — Tarefas em aberto (máx 5, excluindo Resolvido/Cancelado)
+  const openList = document.getElementById('dash-open-tasks-list');
+  if(openList){
+    const prioDot = s => s==='Alta'?'prio-alta':s==='Baixa'?'prio-baixa':'prio-media';
+    const pillClass = s => s==='Em andamento'?'pill-blue':s==='Resolvido'?'pill-green':'pill-amber';
+    if(!open.length){
+      openList.innerHTML = '<div style="text-align:center;color:#94a3b8;padding:16px;font-size:13px">Nenhuma tarefa em aberto</div>';
+    } else {
+      openList.innerHTML = open.slice(0,5).map(([id,t])=>`
+        <div class="task-item" onclick="showPage('tasks');openTaskFB('${id}')" style="cursor:pointer">
+          <div class="task-dot ${prioDot(t.prio)}"></div>
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600;color:#0f172a">${t.title}</div>
+            <div style="font-size:11px;color:#94a3b8">${t.unit||''}${t.req?' · '+t.req:''} · ${t.start||'—'}</div>
+          </div>
+          <span class="pill ${pillClass(t.status)}">${t.status||'Pendente'}</span>
+        </div>`).join('');
+    }
+  }
 }
 
 /* ── open task detail ── */
@@ -538,6 +575,7 @@ async function loadPrices() {
     if (sub) sub.textContent = `Consulta e comparação de preços de materiais · ${_allPrices.length} registo${_allPrices.length!==1?'s':''}`;
   } catch(e) { console.error('loadPrices:', e); }
 }
+window.loadPrices = loadPrices;
 
 window.renderPricesTable = function() {
   const search = (document.getElementById('price-search')?.value || '').toLowerCase();
@@ -894,6 +932,22 @@ window.deleteToolEntry = async function(id, name) {
   } catch(e) { alert('Erro: ' + e.message); }
 };
 
+/* ── Dashboard — carrega contagem de materiais ── */
+async function loadDashboardMaterials() {
+  try {
+    const snap = await getDocs(collection(db,'materials'));
+    const all = snap.docs.map(d => d.data());
+    const noInv = all.filter(m => !m.hasInvoice).length;
+    const countEl = document.getElementById('dash-materials-count');
+    const subEl   = document.getElementById('dash-materials-sub');
+    if(countEl) countEl.textContent = all.length;
+    if(subEl)   subEl.innerHTML = noInv > 0
+      ? `<span class="sub-amber">${noInv} sem factura</span>`
+      : `<span class="sub-green">todas com factura</span>`;
+  } catch(e) { console.error('loadDashboardMaterials:', e); }
+}
+window.loadDashboardMaterials = loadDashboardMaterials;
+
 onAuthStateChanged(auth, async (firebaseUser)=>{
   const loginPage   = document.getElementById('login-page');
   const appRoot     = document.getElementById('app-root');
@@ -952,6 +1006,7 @@ onAuthStateChanged(auth, async (firebaseUser)=>{
       if(profile.color) document.getElementById('sidebar-user-avatar').style.background = profile.color;
       applyRoleRestrictions(profile.role);
       if(profile.role === 'admin') refreshTeamTable();
+      loadDashboardMaterials();
       appRoot.style.display = 'flex';
     }
   } else {
@@ -1206,7 +1261,7 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
     <nav>
       <div class="nav-section">Principal</div>
       <a class="nav-item active" data-page="dashboard" onclick="showPage('dashboard')"><i class="ti ti-layout-dashboard"></i> Dashboard</a>
-      <a class="nav-item" data-page="tasks" onclick="showPage('tasks')"><i class="ti ti-clipboard-list"></i> Tarefas <span class="nav-badge">2</span></a>
+      <a class="nav-item" data-page="tasks" onclick="showPage('tasks')"><i class="ti ti-clipboard-list"></i> Tarefas <span class="nav-badge" id="nav-badge-tasks">0</span></a>
       <a class="nav-item" data-page="projects" onclick="showPage('projects')"><i class="ti ti-folder-kanban"></i> Projectos</a>
       <div class="nav-section">Stock</div>
       <a class="nav-item" data-page="materials" onclick="showPage('materials')"><i class="ti ti-package"></i> Materiais</a>
@@ -1247,8 +1302,8 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
         <div class="stat-card">
           <div class="stat-icon" style="background:linear-gradient(135deg,#6366f1,#9333ea)"><i class="ti ti-clipboard-list"></i></div>
           <div class="stat-label">Tarefas pendentes</div>
-          <div class="stat-value">2</div>
-          <div class="stat-sub"><span class="sub-amber">1 em andamento</span></div>
+          <div class="stat-value" id="dash-pending-count">—</div>
+          <div class="stat-sub" id="dash-inprogress-sub"><span class="sub-amber">—</span></div>
         </div>
         <div class="stat-card">
           <div class="stat-icon" style="background:linear-gradient(135deg,#3b82f6,#6366f1)"><i class="ti ti-folder-kanban"></i></div>
@@ -1259,8 +1314,8 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
         <div class="stat-card">
           <div class="stat-icon" style="background:linear-gradient(135deg,#10b981,#0d9488)"><i class="ti ti-package"></i></div>
           <div class="stat-label">Materiais registados</div>
-          <div class="stat-value">12</div>
-          <div class="stat-sub"><span class="sub-amber">6 sem factura</span></div>
+          <div class="stat-value" id="dash-materials-count">—</div>
+          <div class="stat-sub" id="dash-materials-sub"><span class="sub-amber">—</span></div>
         </div>
         <div class="stat-card">
           <div class="stat-icon" style="background:linear-gradient(135deg,#f59e0b,#ea580c)"><i class="ti ti-currency-dollar"></i></div>
@@ -1273,29 +1328,8 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
       <div class="grid-2">
         <div class="card">
           <div class="card-title">Tarefas em aberto <i class="ti ti-alert-triangle" style="color:#f59e0b"></i></div>
-          <div class="task-item">
-            <div class="task-dot prio-media"></div>
-            <div style="flex:1">
-              <div style="font-size:13px;font-weight:600;color:#0f172a">Concertar a mesa dos professores</div>
-              <div style="font-size:11px;color:#94a3b8">BENGUELA · Chris → Miguel, Paulo · 10–11 Jun</div>
-            </div>
-            <span class="pill pill-amber">Pendente</span>
-          </div>
-          <div class="task-item">
-            <div class="task-dot prio-media"></div>
-            <div style="flex:1">
-              <div style="font-size:13px;font-weight:600;color:#0f172a">Substituir o lidificador quebrado</div>
-              <div style="font-size:11px;color:#94a3b8">BENGUELA · Pascoal → Miguel · 28 Mai</div>
-            </div>
-            <span class="pill pill-amber">Pendente</span>
-          </div>
-          <div class="task-item">
-            <div class="task-dot prio-alta"></div>
-            <div style="flex:1">
-              <div style="font-size:13px;font-weight:600;color:#0f172a">Pintura nos quadros</div>
-              <div style="font-size:11px;color:#94a3b8">BENGUELA · Soma → Miguel, Paulo · 28 Mai</div>
-            </div>
-            <span class="pill pill-blue">Em andamento</span>
+          <div id="dash-open-tasks-list">
+            <div style="text-align:center;color:#94a3b8;padding:16px;font-size:13px">A carregar…</div>
           </div>
         </div>
 
@@ -1382,7 +1416,7 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
       <div class="topbar" id="tasks-topbar-wrap">
         <div>
           <div class="page-title">Tarefas</div>
-          <div class="page-sub">Ordens de trabalho das 3 unidades · 8 registos</div>
+          <div class="page-sub" id="tasks-page-sub">Ordens de trabalho das 3 unidades</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center">
           <div style="display:flex;border:1px solid #e2e8f0;border-radius:9px;overflow:hidden">
@@ -2254,6 +2288,7 @@ function showPage(name) {
   document.querySelectorAll('.nav-item').forEach(item => {
     if (item.dataset.page === name) item.classList.add('active');
   });
+  if (name === 'dashboard'  && typeof loadDashboardMaterials === 'function') loadDashboardMaterials();
   if (name === 'settings'   && typeof refreshTeamTable === 'function') refreshTeamTable();
   if (name === 'prices'     && typeof loadPrices       === 'function') loadPrices();
   if (name === 'materials'  && typeof loadMaterials    === 'function') loadMaterials();
