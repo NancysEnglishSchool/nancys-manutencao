@@ -640,6 +640,260 @@ window.deletePriceEntry = async function(id, name) {
   } catch(e) { alert('Erro: ' + e.message); }
 };
 
+/* ══════════════════════════════════
+   MATERIAIS — Firestore CRUD
+   ══════════════════════════════════ */
+let _allMaterials = [];
+
+async function loadMaterials() {
+  try {
+    const snap = await getDocs(query(collection(db,'materials'), orderBy('createdAt','desc')));
+    _allMaterials = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderMaterialsTable();
+    const sub = document.getElementById('materials-sub');
+    if (sub) sub.textContent = `Registo de compras e facturas · ${_allMaterials.length} registo${_allMaterials.length!==1?'s':''}`;
+  } catch(e) { console.error('loadMaterials:', e); }
+}
+window.loadMaterials = loadMaterials;
+
+window.renderMaterialsTable = function() {
+  const search   = (document.getElementById('mat-search')?.value || '').toLowerCase();
+  const unit     = document.getElementById('mat-unit-filter')?.value || '';
+  const inv      = document.getElementById('mat-inv-filter')?.value || '';
+  const tbody    = document.getElementById('materials-tbody');
+  const totalEl  = document.getElementById('materials-total');
+  if (!tbody) return;
+
+  const filtered = _allMaterials.filter(m => {
+    const matchS = !search || (m.name||'').toLowerCase().includes(search) || (m.buyer||'').toLowerCase().includes(search);
+    const matchU = !unit   || m.unit === unit;
+    const matchI = !inv    || (inv==='yes' ? m.hasInvoice===true : m.hasInvoice!==true);
+    return matchS && matchU && matchI;
+  });
+
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:20px">Nenhum registo encontrado</td></tr>';
+    if (totalEl) totalEl.textContent = '—';
+    return;
+  }
+
+  let grandTotal = 0;
+  const uc = u => u==='BENGUELA'?'b':u==='LOBITO'?'l':'c';
+  tbody.innerHTML = filtered.map(m => {
+    const qty   = Number(m.qty)||1;
+    const price = Number(m.unitPrice)||0;
+    const total = qty * price;
+    grandTotal += total;
+    const dateStr = m.purchaseDate ? new Date(m.purchaseDate+'T00:00:00').toLocaleDateString('pt-PT',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+    const invHtml = m.hasInvoice
+      ? '<span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span>'
+      : '<span class="inv-pend"><i class="ti ti-x" style="font-size:10px"></i> Não</span>';
+    const safeName = (m.name||'').replace(/'/g,'');
+    return `<tr>
+      <td style="font-weight:600">${m.name||'—'}</td>
+      <td><span class="unit-${uc(m.unit||'BENGUELA')}">${m.unit||'—'}</span></td>
+      <td>${qty}</td>
+      <td>${price ? price.toLocaleString('pt-PT')+' Kz' : '—'}</td>
+      <td style="font-weight:700">${total ? total.toLocaleString('pt-PT')+' Kz' : '—'}</td>
+      <td>${m.buyer||'—'}</td>
+      <td>${dateStr}</td>
+      <td>${invHtml}</td>
+      <td>${m.invoiceReceivedBy||'—'}</td>
+      <td style="white-space:nowrap">
+        <span class="icon-btn" onclick="openMaterialModal('${m.id}')" title="Editar"><i class="ti ti-edit"></i></span>
+        <span class="icon-btn" onclick="deleteMaterialEntry('${m.id}','${safeName}')" title="Apagar"><i class="ti ti-trash"></i></span>
+      </td>
+    </tr>`;
+  }).join('');
+
+  if (totalEl) totalEl.textContent = grandTotal.toLocaleString('pt-PT') + ' Kz';
+};
+
+window.openMaterialModal = function(id) {
+  const modal = document.getElementById('material-modal');
+  modal.style.display = 'flex';
+  document.getElementById('mat-edit-id').value = id || '';
+  document.getElementById('material-modal-title').textContent = id ? 'Editar Material' : 'Adicionar Material';
+  if (id) {
+    const m = _allMaterials.find(x => x.id === id);
+    if (m) {
+      document.getElementById('mat-name').value    = m.name    || '';
+      document.getElementById('mat-unit').value    = m.unit    || 'BENGUELA';
+      document.getElementById('mat-qty').value     = m.qty     || 1;
+      document.getElementById('mat-price').value   = m.unitPrice || '';
+      document.getElementById('mat-buyer').value   = m.buyer   || '';
+      document.getElementById('mat-date').value    = m.purchaseDate || '';
+      document.getElementById('mat-invoice').value = m.hasInvoice ? 'yes' : 'no';
+      document.getElementById('mat-recv').value    = m.invoiceReceivedBy || '';
+    }
+  } else {
+    document.getElementById('mat-name').value = '';
+    document.getElementById('mat-unit').value = 'BENGUELA';
+    document.getElementById('mat-qty').value  = 1;
+    document.getElementById('mat-price').value = '';
+    document.getElementById('mat-buyer').value = '';
+    document.getElementById('mat-date').value  = new Date().toISOString().slice(0,10);
+    document.getElementById('mat-invoice').value = 'yes';
+    document.getElementById('mat-recv').value  = '';
+  }
+};
+
+window.closeMaterialModal = function() {
+  document.getElementById('material-modal').style.display = 'none';
+};
+
+window.saveMaterialEntry = async function() {
+  const name    = document.getElementById('mat-name').value.trim();
+  const unit    = document.getElementById('mat-unit').value;
+  const qty     = parseInt(document.getElementById('mat-qty').value) || 1;
+  const unitPrice = parseFloat(document.getElementById('mat-price').value) || 0;
+  const buyer   = document.getElementById('mat-buyer').value.trim();
+  const purchaseDate = document.getElementById('mat-date').value;
+  const hasInvoice   = document.getElementById('mat-invoice').value === 'yes';
+  const invoiceReceivedBy = document.getElementById('mat-recv').value.trim();
+  const editId  = document.getElementById('mat-edit-id').value;
+
+  if (!name) { alert('Escreve o nome do material'); return; }
+
+  const btn = document.getElementById('mat-save-btn');
+  btn.disabled = true; btn.textContent = 'A guardar…';
+  try {
+    const data = { name, unit, qty, unitPrice, buyer, purchaseDate, hasInvoice, invoiceReceivedBy };
+    if (editId) {
+      await updateDoc(doc(db,'materials', editId), data);
+    } else {
+      await addDoc(collection(db,'materials'), { ...data, createdAt: serverTimestamp() });
+    }
+    closeMaterialModal();
+    await loadMaterials();
+  } catch(e) { alert('Erro: ' + e.message); }
+  finally { btn.disabled = false; btn.innerHTML = '<i class="ti ti-device-floppy"></i> Guardar'; }
+};
+
+window.deleteMaterialEntry = async function(id, name) {
+  if (!confirm(`Apagar o material "${name}"?`)) return;
+  try {
+    await deleteDoc(doc(db,'materials', id));
+    await loadMaterials();
+  } catch(e) { alert('Erro: ' + e.message); }
+};
+
+/* ══════════════════════════════════
+   FERRAMENTAS — Firestore CRUD
+   ══════════════════════════════════ */
+let _allTools = [];
+
+async function loadTools() {
+  try {
+    const snap = await getDocs(query(collection(db,'tools'), orderBy('createdAt','desc')));
+    _allTools = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderToolsTable();
+    const sub = document.getElementById('tools-sub');
+    if (sub) sub.textContent = `Inventário de equipamentos · ${_allTools.length} registo${_allTools.length!==1?'s':''}`;
+  } catch(e) { console.error('loadTools:', e); }
+}
+window.loadTools = loadTools;
+
+window.renderToolsTable = function() {
+  const search = (document.getElementById('tool-search')?.value || '').toLowerCase();
+  const unit   = document.getElementById('tool-unit-filter')?.value || '';
+  const cond   = document.getElementById('tool-cond-filter')?.value || '';
+  const tbody  = document.getElementById('tools-tbody');
+  if (!tbody) return;
+
+  const filtered = _allTools.filter(t => {
+    const matchS = !search || (t.name||'').toLowerCase().includes(search) || (t.responsible||'').toLowerCase().includes(search);
+    const matchU = !unit   || t.unit === unit;
+    const matchC = !cond   || t.condition === cond;
+    return matchS && matchU && matchC;
+  });
+
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px">Nenhum registo encontrado</td></tr>';
+    return;
+  }
+
+  const uc = u => u==='BENGUELA'?'b':u==='LOBITO'?'l':'c';
+  const condPill = c => c==='Bom'?'pill-green':c==='Danificado'?'pill-red':'pill-amber';
+  tbody.innerHTML = filtered.map(t => {
+    const safeName = (t.name||'').replace(/'/g,'');
+    return `<tr>
+      <td style="font-weight:600">${t.name||'—'}</td>
+      <td><span class="unit-${uc(t.unit||'BENGUELA')}">${t.unit||'—'}</span></td>
+      <td><span class="pill ${condPill(t.condition)}">${t.condition||'—'}</span></td>
+      <td>${t.location||'—'}</td>
+      <td>${t.responsible||'—'}</td>
+      <td>${t.value ? Number(t.value).toLocaleString('pt-PT')+' Kz' : '—'}</td>
+      <td style="white-space:nowrap">
+        <span class="icon-btn" onclick="openToolModal('${t.id}')" title="Editar"><i class="ti ti-edit"></i></span>
+        <span class="icon-btn" onclick="deleteToolEntry('${t.id}','${safeName}')" title="Apagar"><i class="ti ti-trash"></i></span>
+      </td>
+    </tr>`;
+  }).join('');
+};
+
+window.openToolModal = function(id) {
+  const modal = document.getElementById('tool-modal');
+  modal.style.display = 'flex';
+  document.getElementById('tool-edit-id').value = id || '';
+  document.getElementById('tool-modal-title').textContent = id ? 'Editar Ferramenta' : 'Adicionar Ferramenta';
+  if (id) {
+    const t = _allTools.find(x => x.id === id);
+    if (t) {
+      document.getElementById('tool-name').value        = t.name        || '';
+      document.getElementById('tool-unit').value        = t.unit        || 'BENGUELA';
+      document.getElementById('tool-cond').value        = t.condition   || 'Bom';
+      document.getElementById('tool-location').value    = t.location    || '';
+      document.getElementById('tool-responsible').value = t.responsible || '';
+      document.getElementById('tool-value').value       = t.value       || '';
+    }
+  } else {
+    ['tool-name','tool-location','tool-responsible','tool-value'].forEach(id => {
+      const el = document.getElementById(id); if(el) el.value = '';
+    });
+    document.getElementById('tool-unit').value = 'BENGUELA';
+    document.getElementById('tool-cond').value = 'Bom';
+  }
+};
+
+window.closeToolModal = function() {
+  document.getElementById('tool-modal').style.display = 'none';
+};
+
+window.saveToolEntry = async function() {
+  const name        = document.getElementById('tool-name').value.trim();
+  const unit        = document.getElementById('tool-unit').value;
+  const condition   = document.getElementById('tool-cond').value;
+  const location    = document.getElementById('tool-location').value.trim();
+  const responsible = document.getElementById('tool-responsible').value.trim();
+  const value       = parseFloat(document.getElementById('tool-value').value) || 0;
+  const editId      = document.getElementById('tool-edit-id').value;
+
+  if (!name) { alert('Escreve o nome da ferramenta'); return; }
+
+  const btn = document.getElementById('tool-save-btn');
+  btn.disabled = true; btn.textContent = 'A guardar…';
+  try {
+    const data = { name, unit, condition, location, responsible, value };
+    if (editId) {
+      await updateDoc(doc(db,'tools', editId), data);
+    } else {
+      await addDoc(collection(db,'tools'), { ...data, createdAt: serverTimestamp() });
+    }
+    closeToolModal();
+    await loadTools();
+  } catch(e) { alert('Erro: ' + e.message); }
+  finally { btn.disabled = false; btn.innerHTML = '<i class="ti ti-device-floppy"></i> Guardar'; }
+};
+
+window.deleteToolEntry = async function(id, name) {
+  if (!confirm(`Apagar a ferramenta "${name}"?`)) return;
+  try {
+    await deleteDoc(doc(db,'tools', id));
+    await loadTools();
+  } catch(e) { alert('Erro: ' + e.message); }
+};
+
 onAuthStateChanged(auth, async (firebaseUser)=>{
   const loginPage   = document.getElementById('login-page');
   const appRoot     = document.getElementById('app-root');
@@ -1539,172 +1793,69 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
       <div class="topbar">
         <div>
           <div class="page-title">Materiais</div>
-          <div class="page-sub">Registo de compras e facturas · 12 registos</div>
+          <div class="page-sub" id="materials-sub">Registo de compras e facturas</div>
         </div>
-        <button class="btn btn-primary"><i class="ti ti-plus"></i> Adicionar material</button>
+        <button class="btn btn-primary" onclick="openMaterialModal()"><i class="ti ti-plus"></i> Adicionar material</button>
       </div>
 
       <div class="card" style="margin-bottom:16px;padding:14px">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <input type="text" placeholder="Pesquisar materiais..." style="width:220px">
-          <select style="width:130px">
-            <option>Todas as unidades</option>
-            <option>BENGUELA</option>
-            <option>LOBITO</option>
-            <option>CKC</option>
+          <input type="text" id="mat-search" placeholder="Pesquisar materiais..." style="width:220px" oninput="renderMaterialsTable()">
+          <select id="mat-unit-filter" style="width:130px" onchange="renderMaterialsTable()">
+            <option value="">Todas as unidades</option>
+            <option>BENGUELA</option><option>LOBITO</option><option>CKC</option>
           </select>
-          <select style="width:160px">
-            <option>Todas as facturas</option>
-            <option>Factura entregue</option>
-            <option>Sem factura</option>
-          </select>
-          <select style="width:140px">
-            <option>Todos os compradores</option>
-            <option>Soma</option>
-            <option>Sr. Domingos</option>
+          <select id="mat-inv-filter" style="width:160px" onchange="renderMaterialsTable()">
+            <option value="">Todas as facturas</option>
+            <option value="yes">Factura entregue</option>
+            <option value="no">Sem factura</option>
           </select>
         </div>
       </div>
 
       <div class="card" style="overflow-x:auto">
         <table><thead><tr><th>Material</th><th>Unidade</th><th>Qty</th><th>Preço unit. (Kz)</th><th>Total (Kz)</th><th>Comprado por</th><th>Data compra</th><th>Factura</th><th>Recebida por</th><th>Ações</th></tr></thead>
-        <tbody>
-          <tr>
-            <td style="font-weight:600">Térmico sprint 12000 BTU</td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td>1</td><td>2.200 Kz</td>
-            <td style="font-weight:700">2.200 Kz</td>
-            <td>Soma</td>
-            <td>21 Mai 2026</td>
-            <td><span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span></td>
-            <td>Teté</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Térmico sprint 9000 BTU</td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td>1</td><td>2.200 Kz</td>
-            <td style="font-weight:700">2.200 Kz</td>
-            <td>Soma</td>
-            <td>21 Mai 2026</td>
-            <td><span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span></td>
-            <td>Teté</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Fita Anstrong</td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td>2</td><td>3.000 Kz</td>
-            <td style="font-weight:700">6.000 Kz</td>
-            <td>Soma</td>
-            <td>21 Mai 2026</td>
-            <td><span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span></td>
-            <td>Teté</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Comando universal</td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td>3</td><td>3.700 Kz</td>
-            <td style="font-weight:700">11.100 Kz</td>
-            <td>Soma</td>
-            <td>21 Mai 2026</td>
-            <td><span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span></td>
-            <td>Teté</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Vareta</td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td>3</td><td>2.000 Kz</td>
-            <td style="font-weight:700">6.000 Kz</td>
-            <td>Soma</td>
-            <td>21 Mai 2026</td>
-            <td><span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span></td>
-            <td>Teté</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Compressor sprint 9000 BTU</td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td>1</td><td>10.700 Kz</td>
-            <td style="font-weight:700">10.700 Kz</td>
-            <td>Soma</td>
-            <td>21 Mai 2026</td>
-            <td><span class="inv-ok"><i class="ti ti-check" style="font-size:10px"></i> Sim</span></td>
-            <td>Teté</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Parafuso</td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td>1</td><td>2.000 Kz</td>
-            <td style="font-weight:700">2.000 Kz</td>
-            <td>Sr. Domingos</td>
-            <td>—</td>
-            <td><span class="inv-pend"><i class="ti ti-x" style="font-size:10px"></i> Não</span></td>
-            <td>—</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Dobradiças</td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td>1</td><td>3.500 Kz</td>
-            <td style="font-weight:700">3.500 Kz</td>
-            <td>Sr. Domingos</td>
-            <td>—</td>
-            <td><span class="inv-pend"><i class="ti ti-x" style="font-size:10px"></i> Não</span></td>
-            <td>—</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Rebite</td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td>1</td><td>3.500 Kz</td>
-            <td style="font-weight:700">3.500 Kz</td>
-            <td>Sr. Domingos</td>
-            <td>—</td>
-            <td><span class="inv-pend"><i class="ti ti-x" style="font-size:10px"></i> Não</span></td>
-            <td>—</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Disco de corte</td>
-            <td><span class="unit-l">LOBITO</span></td>
-            <td>1</td><td>500 Kz</td>
-            <td style="font-weight:700">500 Kz</td>
-            <td>Sr. Domingos</td>
-            <td>—</td>
-            <td><span class="inv-pend"><i class="ti ti-x" style="font-size:10px"></i> Não</span></td>
-            <td>—</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Eletrodos</td>
-            <td><span class="unit-l">LOBITO</span></td>
-            <td>1</td><td>4.500 Kz</td>
-            <td style="font-weight:700">4.500 Kz</td>
-            <td>Sr. Domingos</td>
-            <td>—</td>
-            <td><span class="inv-pend"><i class="ti ti-x" style="font-size:10px"></i> Não</span></td>
-            <td>—</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:600">Cantoneira</td>
-            <td><span class="unit-l">LOBITO</span></td>
-            <td>1</td><td>8.000 Kz</td>
-            <td style="font-weight:700">8.000 Kz</td>
-            <td>Sr. Domingos</td>
-            <td>—</td>
-            <td><span class="inv-pend"><i class="ti ti-x" style="font-size:10px"></i> Não</span></td>
-            <td>—</td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
+        <tbody id="materials-tbody">
+          <tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:20px">A carregar…</td></tr>
         </tbody></table>
         <div style="padding:14px;border-top:1px solid #f1f5f9;display:flex;justify-content:flex-end;gap:8px;font-size:13px">
           <span style="color:#64748b">Total materiais:</span>
-          <strong style="color:#0f172a">60.200 Kz</strong>
+          <strong id="materials-total" style="color:#0f172a">—</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Adicionar/Editar Material -->
+    <div id="material-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)closeMaterialModal()">
+      <div style="background:#fff;border-radius:18px;width:560px;max-width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,.18)">
+        <div style="position:sticky;top:0;background:#fff;padding:20px 24px 16px;border-bottom:1px solid #f1f5f9;border-radius:18px 18px 0 0;display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:17px;font-weight:700;color:#0f172a" id="material-modal-title">Adicionar Material</div>
+          <button onclick="closeMaterialModal()" style="background:none;border:none;cursor:pointer;font-size:20px;color:#94a3b8;line-height:1">×</button>
+        </div>
+        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+          <input type="hidden" id="mat-edit-id">
+          <div class="form-group"><label>Material *</label><input type="text" id="mat-name" placeholder="Nome do material" style="width:100%"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+            <div class="form-group"><label>Unidade</label>
+              <select id="mat-unit" style="width:100%"><option value="BENGUELA">BENGUELA</option><option value="LOBITO">LOBITO</option><option value="CKC">CKC</option></select>
+            </div>
+            <div class="form-group"><label>Quantidade</label><input type="number" id="mat-qty" value="1" min="1" style="width:100%"></div>
+            <div class="form-group"><label>Preço unit. (Kz)</label><input type="number" id="mat-price" placeholder="0" min="0" style="width:100%"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>Comprado por</label><input type="text" id="mat-buyer" placeholder="Ex: Soma, Sr. Domingos…" style="width:100%"></div>
+            <div class="form-group"><label>Data de compra</label><input type="date" id="mat-date" style="width:100%"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>Factura</label>
+              <select id="mat-invoice" style="width:100%"><option value="yes">Sim — entregue</option><option value="no">Não</option></select>
+            </div>
+            <div class="form-group"><label>Recebida por</label><input type="text" id="mat-recv" placeholder="Ex: Teté, Nancy…" style="width:100%"></div>
+          </div>
+        </div>
+        <div style="position:sticky;bottom:0;background:#fff;padding:16px 24px;border-top:1px solid #f1f5f9;border-radius:0 0 18px 18px;display:flex;gap:10px;justify-content:flex-end">
+          <button class="btn btn-sm" onclick="closeMaterialModal()">Cancelar</button>
+          <button class="btn btn-primary btn-sm" id="mat-save-btn" onclick="saveMaterialEntry()"><i class="ti ti-device-floppy"></i> Guardar</button>
         </div>
       </div>
     </div>
@@ -1714,92 +1865,61 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
       <div class="topbar">
         <div>
           <div class="page-title">Ferramentas</div>
-          <div class="page-sub">Inventário de equipamentos · 6 registos</div>
+          <div class="page-sub" id="tools-sub">Inventário de equipamentos</div>
         </div>
-        <button class="btn btn-primary"><i class="ti ti-plus"></i> Adicionar ferramenta</button>
+        <button class="btn btn-primary" onclick="openToolModal()"><i class="ti ti-plus"></i> Adicionar ferramenta</button>
       </div>
 
       <div class="card" style="margin-bottom:16px;padding:14px">
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <input type="text" placeholder="Pesquisar ferramentas..." style="width:220px">
-          <select style="width:130px">
-            <option>Todas as unidades</option>
-            <option>BENGUELA</option>
-            <option>LOBITO</option>
-            <option>CKC</option>
+          <input type="text" id="tool-search" placeholder="Pesquisar ferramentas..." style="width:220px" oninput="renderToolsTable()">
+          <select id="tool-unit-filter" style="width:130px" onchange="renderToolsTable()">
+            <option value="">Todas as unidades</option>
+            <option>BENGUELA</option><option>LOBITO</option><option>CKC</option>
           </select>
-          <select style="width:140px">
-            <option>Todas as condições</option>
-            <option>Bom</option>
-            <option>Danificado</option>
+          <select id="tool-cond-filter" style="width:140px" onchange="renderToolsTable()">
+            <option value="">Todas as condições</option>
+            <option>Bom</option><option>Danificado</option><option>Em reparação</option>
           </select>
         </div>
       </div>
 
       <div class="card" style="overflow-x:auto">
-        <table><thead><tr><th>Ferramenta</th><th>Unidade</th><th>Condição</th><th>Local</th><th>Responsável</th><th>Valor (Kz)</th><th>Foto</th><th>Ações</th></tr></thead>
-        <tbody>
-          <tr>
-            <td><strong style="font-weight:700">Agrafador</strong></td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td><span class="pill pill-green">Bom</span></td>
-            <td>Arrecadação #21</td>
-            <td>Miguel</td>
-            <td>—</td>
-            <td><img class="thumb" src="manutencao_fotos/agrafador.jpg" onclick="lb(this.src,'Agrafador')" title="Agrafador"></td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td><strong style="font-weight:700">Colher de pedreiro</strong></td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td><span class="pill pill-red">Danificado</span></td>
-            <td>—</td>
-            <td>Miguel</td>
-            <td>1.500 Kz</td>
-            <td><img class="thumb" src="manutencao_fotos/colher_pedreiro.jpg" onclick="lb(this.src,'Colher de pedreiro')" title="Colher de pedreiro"></td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td><strong style="font-weight:700">Marreta pega bimateria</strong></td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td><span class="pill pill-red">Danificado</span></td>
-            <td>—</td>
-            <td>Miguel</td>
-            <td>4.500 Kz</td>
-            <td><span style="font-size:11px;color:#94a3b8">—</span></td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td><strong style="font-weight:700">Parafusadora</strong></td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td><span class="pill pill-green">Bom</span></td>
-            <td>Arrecadação #21</td>
-            <td>Miguel</td>
-            <td>36.000 Kz</td>
-            <td><img class="thumb" src="manutencao_fotos/parafusadora.jpg" onclick="lb(this.src,'Parafusadora')" title="Parafusadora"></td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td><strong style="font-weight:700">Martelo de carpinteiro</strong></td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td><span class="pill pill-red">Danificado</span></td>
-            <td>Sala de Manutenção</td>
-            <td>Miguel</td>
-            <td>1.950 Kz</td>
-            <td><img class="thumb" src="manutencao_fotos/martelo.jpg" onclick="lb(this.src,'Martelo de carpinteiro')" title="Martelo de carpinteiro"></td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
-          <tr>
-            <td><strong style="font-weight:700">Masseta cabo de madeira</strong></td>
-            <td><span class="unit-b">BENGUELA</span></td>
-            <td><span class="pill pill-green">Bom</span></td>
-            <td>Sala de Manutenção do Soma</td>
-            <td>Miguel</td>
-            <td>4.000 Kz</td>
-            <td><img class="thumb" src="manutencao_fotos/masseta.jpg" onclick="lb(this.src,'Masseta cabo de madeira')" title="Masseta"></td>
-            <td><span class="icon-btn"><i class="ti ti-edit"></i></span></td>
-          </tr>
+        <table><thead><tr><th>Ferramenta</th><th>Unidade</th><th>Condição</th><th>Local</th><th>Responsável</th><th>Valor (Kz)</th><th>Ações</th></tr></thead>
+        <tbody id="tools-tbody">
+          <tr><td colspan="7" style="text-align:center;color:#94a3b8;padding:20px">A carregar…</td></tr>
         </tbody></table>
+      </div>
+    </div>
+
+    <!-- Modal Adicionar/Editar Ferramenta -->
+    <div id="tool-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)closeToolModal()">
+      <div style="background:#fff;border-radius:18px;width:520px;max-width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,.18)">
+        <div style="position:sticky;top:0;background:#fff;padding:20px 24px 16px;border-bottom:1px solid #f1f5f9;border-radius:18px 18px 0 0;display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:17px;font-weight:700;color:#0f172a" id="tool-modal-title">Adicionar Ferramenta</div>
+          <button onclick="closeToolModal()" style="background:none;border:none;cursor:pointer;font-size:20px;color:#94a3b8;line-height:1">×</button>
+        </div>
+        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+          <input type="hidden" id="tool-edit-id">
+          <div class="form-group"><label>Ferramenta *</label><input type="text" id="tool-name" placeholder="Nome da ferramenta" style="width:100%"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>Unidade</label>
+              <select id="tool-unit" style="width:100%"><option value="BENGUELA">BENGUELA</option><option value="LOBITO">LOBITO</option><option value="CKC">CKC</option></select>
+            </div>
+            <div class="form-group"><label>Condição</label>
+              <select id="tool-cond" style="width:100%"><option>Bom</option><option>Danificado</option><option>Em reparação</option></select>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>Local / Arrecadação</label><input type="text" id="tool-location" placeholder="Ex: Arrecadação #21" style="width:100%"></div>
+            <div class="form-group"><label>Responsável</label><input type="text" id="tool-responsible" placeholder="Ex: Miguel" style="width:100%"></div>
+          </div>
+          <div class="form-group"><label>Valor (Kz)</label><input type="number" id="tool-value" placeholder="0" min="0" style="width:100%"></div>
+        </div>
+        <div style="position:sticky;bottom:0;background:#fff;padding:16px 24px;border-top:1px solid #f1f5f9;border-radius:0 0 18px 18px;display:flex;gap:10px;justify-content:flex-end">
+          <button class="btn btn-sm" onclick="closeToolModal()">Cancelar</button>
+          <button class="btn btn-primary btn-sm" id="tool-save-btn" onclick="saveToolEntry()"><i class="ti ti-device-floppy"></i> Guardar</button>
+        </div>
       </div>
     </div>
 
@@ -2134,8 +2254,10 @@ function showPage(name) {
   document.querySelectorAll('.nav-item').forEach(item => {
     if (item.dataset.page === name) item.classList.add('active');
   });
-  if (name === 'settings' && typeof refreshTeamTable === 'function') refreshTeamTable();
-  if (name === 'prices'   && typeof loadPrices       === 'function') loadPrices();
+  if (name === 'settings'   && typeof refreshTeamTable === 'function') refreshTeamTable();
+  if (name === 'prices'     && typeof loadPrices       === 'function') loadPrices();
+  if (name === 'materials'  && typeof loadMaterials    === 'function') loadMaterials();
+  if (name === 'tools'      && typeof loadTools        === 'function') loadTools();
   window.scrollTo(0, 0);
 }
 var TASKS={
