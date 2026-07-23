@@ -448,6 +448,41 @@ window.doRejectUser = async function(uid, name){
   }catch(e){ alert('Erro: '+e.message); }
 };
 
+window.openEditUserModal = function(uid, name, role, unit, email){
+  document.getElementById('edit-user-uid').value   = uid;
+  document.getElementById('edit-user-name').value  = name;
+  document.getElementById('edit-user-email').textContent = email;
+  document.getElementById('edit-user-role').value  = role;
+  document.getElementById('edit-user-unit').value  = unit;
+  document.getElementById('edit-user-modal').style.display = 'flex';
+};
+window.closeEditUserModal = function(){
+  document.getElementById('edit-user-modal').style.display = 'none';
+};
+window.doEditUser = async function(){
+  const uid  = document.getElementById('edit-user-uid').value;
+  const name = document.getElementById('edit-user-name').value.trim();
+  const role = document.getElementById('edit-user-role').value;
+  const unit = document.getElementById('edit-user-unit').value;
+  if(!name){ alert('O nome não pode estar vazio.'); return; }
+  const btn = document.getElementById('edit-user-btn');
+  btn.disabled = true; btn.textContent = 'A guardar…';
+  try{
+    const initials = name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
+    await updateDoc(doc(db,'manutencao_users', uid), { name, role, unit, initials });
+    closeEditUserModal();
+    refreshTeamTable();
+  }catch(e){ alert('Erro: '+e.message); }
+  finally{ btn.disabled=false; btn.innerHTML='<i class="ti ti-device-floppy"></i> Guardar'; }
+};
+window.doDeleteTeamUser = async function(uid, name){
+  if(!confirm(`Apagar o utilizador "${name}"?\nEsta acção remove o acesso permanentemente.`)) return;
+  try{
+    await deleteDoc(doc(db,'manutencao_users', uid));
+    refreshTeamTable();
+  }catch(e){ alert('Erro: '+e.message); }
+};
+
 /* ── Criar novo utilizador (admin only) ── */
 window.openCreateUserModal = function(){
   document.getElementById('create-user-modal').style.display='flex';
@@ -532,6 +567,7 @@ async function refreshTeamTable(){
     } else {
       const roleLabel = ROLE_LABELS_LOCAL[u.role] || (u.role||'—');
       const rolePill  = ROLE_PILLS[u.role] || 'pill-gray';
+      const safeName = (u.name||'').replace(/'/g,'');
       activeRows += `<tr>
         <td><div style="display:flex;align-items:center;gap:8px">
           <div class="avatar" style="width:28px;height:28px;font-size:10px;background:${color}">${initials}</div>
@@ -540,11 +576,15 @@ async function refreshTeamTable(){
         <td><span class="pill ${rolePill}">${roleLabel}</span></td>
         <td>${unitBadge}</td>
         <td><span class="pill pill-green">Activo</span></td>
+        <td class="admin-only" style="white-space:nowrap">
+          <span class="icon-btn" onclick="openEditUserModal('${d.id}','${safeName}','${u.role||''}','${u.unit||''}','${u.email||''}')" title="Editar"><i class="ti ti-edit"></i></span>
+          <span class="icon-btn" onclick="doDeleteTeamUser('${d.id}','${safeName}')" title="Apagar" style="color:#ef4444"><i class="ti ti-trash"></i></span>
+        </td>
       </tr>`;
     }
   });
 
-  tbody.innerHTML = activeRows || '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">Nenhum utilizador activo</td></tr>';
+  tbody.innerHTML = activeRows || '<tr><td colspan="5" style="text-align:center;color:#94a3b8;padding:20px">Nenhum utilizador activo</td></tr>';
 
   if(pendingWrap){
     pendingWrap.style.display = nPending > 0 ? '' : 'none';
@@ -2437,7 +2477,7 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
         <div style="display:flex;flex-direction:column;gap:16px">
           <div class="card">
             <div class="card-title">Equipa <i class="ti ti-users"></i></div>
-            <table><thead><tr><th>Nome</th><th>Função</th><th>Unidade</th><th>Estado</th></tr></thead>
+            <table><thead><tr><th>Nome</th><th>Função</th><th>Unidade</th><th>Estado</th><th class="admin-only">Ações</th></tr></thead>
             <tbody id="team-tbody">
               <tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:20px">A carregar…</td></tr>
             </tbody></table>
@@ -2804,6 +2844,43 @@ function switchAuthTab(tab){
 </div>
 
 <!-- ==================== MODAL APROVAR UTILIZADOR ==================== -->
+<div id="edit-user-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center" onclick="if(event.target===this)closeEditUserModal()">
+  <div style="background:#fff;border-radius:16px;padding:28px;width:420px;max-width:95vw;box-shadow:0 24px 60px rgba(0,0,0,.2)">
+    <div style="font-size:17px;font-weight:700;color:#0f172a;margin-bottom:4px"><i class="ti ti-user-edit" style="color:#6366f1"></i> Editar utilizador</div>
+    <div style="font-size:12px;color:#94a3b8;margin-bottom:20px" id="edit-user-email"></div>
+    <input type="hidden" id="edit-user-uid">
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
+      <div class="form-group" style="margin:0">
+        <label>Nome</label>
+        <input type="text" id="edit-user-name" style="width:100%">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin:0">
+          <label>Cargo</label>
+          <select id="edit-user-role" style="width:100%">
+            <option value="tecnico">Técnico / Comprador</option>
+            <option value="recetor_faturas">Recep. Facturas</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Unidade</label>
+          <select id="edit-user-unit" style="width:100%">
+            <option value="">— Todas —</option>
+            <option value="BENGUELA">BENGUELA</option>
+            <option value="LOBITO">LOBITO</option>
+            <option value="CKC">CKC</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeEditUserModal()">Cancelar</button>
+      <button id="edit-user-btn" class="btn btn-primary" onclick="doEditUser()"><i class="ti ti-device-floppy"></i> Guardar</button>
+    </div>
+  </div>
+</div>
+
 <div id="approve-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:10000;align-items:center;justify-content:center" onclick="if(event.target===this)closeApproveModal()">
   <div style="background:#fff;border-radius:16px;padding:28px;width:400px;max-width:95vw;box-shadow:0 24px 60px rgba(0,0,0,.2)">
     <div style="font-size:17px;font-weight:700;color:#0f172a;margin-bottom:4px"><i class="ti ti-user-check" style="color:#16a34a"></i> Aprovar utilizador</div>
