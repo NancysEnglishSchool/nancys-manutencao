@@ -799,21 +799,23 @@ window.openMaterialModal = function(id) {
       document.getElementById('mat-name').value    = m.name    || '';
       document.getElementById('mat-unit').value    = m.unit    || 'BENGUELA';
       document.getElementById('mat-qty').value     = m.qty     || 1;
-      document.getElementById('mat-price').value   = m.unitPrice || '';
-      document.getElementById('mat-buyer').value   = m.buyer   || '';
-      document.getElementById('mat-date').value    = m.purchaseDate || '';
-      document.getElementById('mat-invoice').value = m.hasInvoice ? 'yes' : 'no';
-      document.getElementById('mat-recv').value    = m.invoiceReceivedBy || '';
+      document.getElementById('mat-price').value     = m.unitPrice || '';
+      document.getElementById('mat-transport').value = m.transport || '';
+      document.getElementById('mat-buyer').value     = m.buyer   || '';
+      document.getElementById('mat-date').value      = m.purchaseDate || '';
+      document.getElementById('mat-invoice').value   = m.hasInvoice ? 'yes' : 'no';
+      document.getElementById('mat-recv').value      = m.invoiceReceivedBy || '';
     }
   } else {
     document.getElementById('mat-name').value = '';
     document.getElementById('mat-unit').value = 'BENGUELA';
     document.getElementById('mat-qty').value  = 1;
-    document.getElementById('mat-price').value = '';
-    document.getElementById('mat-buyer').value = '';
-    document.getElementById('mat-date').value  = new Date().toISOString().slice(0,10);
-    document.getElementById('mat-invoice').value = 'yes';
-    document.getElementById('mat-recv').value  = '';
+    document.getElementById('mat-price').value     = '';
+    document.getElementById('mat-transport').value = '';
+    document.getElementById('mat-buyer').value     = '';
+    document.getElementById('mat-date').value      = new Date().toISOString().slice(0,10);
+    document.getElementById('mat-invoice').value   = 'yes';
+    document.getElementById('mat-recv').value      = '';
   }
 };
 
@@ -825,10 +827,11 @@ window.saveMaterialEntry = async function() {
   const name    = document.getElementById('mat-name').value.trim();
   const unit    = document.getElementById('mat-unit').value;
   const qty     = parseInt(document.getElementById('mat-qty').value) || 1;
-  const unitPrice = parseFloat(document.getElementById('mat-price').value) || 0;
-  const buyer   = document.getElementById('mat-buyer').value.trim();
-  const purchaseDate = document.getElementById('mat-date').value;
-  const hasInvoice   = document.getElementById('mat-invoice').value === 'yes';
+  const unitPrice  = parseFloat(document.getElementById('mat-price').value) || 0;
+  const transport  = parseFloat(document.getElementById('mat-transport').value) || 0;
+  const buyer      = document.getElementById('mat-buyer').value.trim();
+  const purchaseDate      = document.getElementById('mat-date').value;
+  const hasInvoice        = document.getElementById('mat-invoice').value === 'yes';
   const invoiceReceivedBy = document.getElementById('mat-recv').value.trim();
   const editId  = document.getElementById('mat-edit-id').value;
 
@@ -837,7 +840,7 @@ window.saveMaterialEntry = async function() {
   const btn = document.getElementById('mat-save-btn');
   btn.disabled = true; btn.textContent = 'A guardar…';
   try {
-    const data = { name, unit, qty, unitPrice, buyer, purchaseDate, hasInvoice, invoiceReceivedBy };
+    const data = { name, unit, qty, unitPrice, transport, buyer, purchaseDate, hasInvoice, invoiceReceivedBy };
     if (editId) {
       await updateDoc(doc(db,'materials', editId), data);
     } else {
@@ -2194,12 +2197,13 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
         <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
           <input type="hidden" id="mat-edit-id">
           <div class="form-group"><label>Material *</label><input type="text" id="mat-name" placeholder="Nome do material" style="width:100%"></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px">
             <div class="form-group"><label>Unidade</label>
               <select id="mat-unit" style="width:100%"><option value="BENGUELA">BENGUELA</option><option value="LOBITO">LOBITO</option><option value="CKC">CKC</option></select>
             </div>
             <div class="form-group"><label>Quantidade</label><input type="number" id="mat-qty" value="1" min="1" style="width:100%"></div>
             <div class="form-group"><label>Preço unit. (Kz)</label><input type="number" id="mat-price" placeholder="0" min="0" style="width:100%"></div>
+            <div class="form-group"><label>Transporte (Kz)</label><input type="number" id="mat-transport" placeholder="0" min="0" style="width:100%"></div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
             <div class="form-group"><label>Comprado por</label><input type="text" id="mat-buyer" placeholder="Ex: Soma, Sr. Domingos…" style="width:100%"></div>
