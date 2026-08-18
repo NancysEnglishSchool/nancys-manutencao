@@ -317,8 +317,8 @@ let currentUser = null;
 window.__currentUser = null;
 
 const ROLE_PAGES = {
-  admin:           ['dashboard','tasks','projects','materials','tools','prices','chat','reports','settings'],
-  tecnico:         ['dashboard','tasks','materials','tools','prices','chat'],
+  admin:           ['dashboard','tasks','projects','projectdetail','materials','tools','prices','chat','reports','settings'],
+  tecnico:         ['dashboard','tasks','projects','projectdetail','materials','tools','prices','chat'],
   recetor_faturas: ['dashboard','materials','chat'],
 };
 const ROLE_LABELS = {
@@ -1132,22 +1132,13 @@ window.openProjectDetail = function(id) {
   _currentProjectId = id;
 
   const budget = Number(p.budget||0);
-  const spent  = Number(p.spent||0);
-  const balance = budget - spent;
-  const pct = budget > 0 ? Math.min(100, Math.round(spent/budget*100)) : 0;
   const uc = UNIT_CLASS[p.unit] || 'unit-b';
-
-  const set = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
-  const setHTML = (id, val) => { const el=document.getElementById(id); if(el) el.innerHTML=val; };
+  const set = (elId, val) => { const el=document.getElementById(elId); if(el) el.textContent=val; };
 
   set('pd-title', p.title||'—');
-  set('pd-sub', `Responsável: ${p.responsible||'—'} · Início: ${p.startDate||'—'}`);
+  set('pd-sub', p.description ? p.description.slice(0,60)+(p.description.length>60?'…':'') : (p.unit||'—'));
   set('pd-budget', FMT_KZ(budget));
-  set('pd-spent', FMT_KZ(spent));
-  set('pd-balance', FMT_KZ(balance));
-  set('pd-progress', pct + '%');
   set('pd-desc', p.description||'Sem descrição.');
-  set('pd-info-unit', p.unit||'—');
   set('pd-info-resp', p.responsible||'—');
   set('pd-info-start', p.startDate||'—');
   set('pd-info-status', p.status||'—');
@@ -1155,17 +1146,8 @@ window.openProjectDetail = function(id) {
   const unitBadge = document.getElementById('pd-unit-badge');
   if (unitBadge) { unitBadge.textContent = p.unit||'—'; unitBadge.className = uc; }
 
-  const statusPill = document.getElementById('pd-status-pill');
-  if (statusPill) {
-    statusPill.textContent = p.status||'—';
-    const cls = p.status==='Concluído' ? 'pill-green' : p.status==='Em andamento' ? 'pill-blue' : 'pill-gray';
-    statusPill.className = 'pill ' + cls;
-  }
-
-  const bar = document.getElementById('pd-progress-bar');
-  if (bar) bar.style.width = pct + '%';
-
   showPage('projectdetail');
+  loadProjectGastos(id);
 };
 
 window.editCurrentProject = function() {
@@ -1182,6 +1164,226 @@ window.deleteCurrentProject = async function() {
     await loadProjects();
     showPage('projects');
   } catch(e) { alert('Erro: '+e.message); }
+};
+
+/* ──────────────────────── GASTOS DE PROJECTO ──────────────────────── */
+let _projectGastosUnsub = null;
+let _currentGastos = [];
+
+const CAT_COLORS = {
+  'Carteiras':'#6366f1','Soldadura':'#f59e0b','Portas':'#10b981','Vidros':'#0ea5e9',
+  'Telhado':'#8b5cf6','Chão':'#ef4444','Paredes':'#f97316','Gesso':'#06b6d4',
+  'Madeira':'#84cc16','Metal':'#64748b','Electricidade':'#eab308','Canalizações':'#0891b2','Outros':'#94a3b8'
+};
+
+function loadProjectGastos(projectId) {
+  if (_projectGastosUnsub) { _projectGastosUnsub(); _projectGastosUnsub = null; }
+  const q = query(collection(db,'project_gastos'), orderBy('createdAt','asc'));
+  _projectGastosUnsub = onSnapshot(q, snap => {
+    _currentGastos = snap.docs.filter(d=>d.data().projectId===projectId).map(d=>({id:d.id,...d.data()}));
+    renderProjectGastos();
+  });
+}
+
+function renderProjectGastos() {
+  const total = _currentGastos.reduce((s,g)=>s+Number(g.total||0),0);
+  const cats = [...new Set(_currentGastos.map(g=>g.category).filter(Boolean))];
+  const avg = _currentGastos.length ? total/_currentGastos.length : 0;
+
+  const setT = (id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
+  const setH = (id,v)=>{ const e=document.getElementById(id); if(e) e.innerHTML=v; };
+
+  setT('pd-total-gasto', FMT_KZ(total));
+  setT('pd-itens-count', _currentGastos.length);
+  setT('pd-categorias-count', cats.length + ' categori' + (cats.length===1?'a':'as'));
+  setT('pd-media', Number(avg).toLocaleString('pt-PT',{maximumFractionDigits:0}));
+
+  // Category summary bars
+  const catMap = {};
+  _currentGastos.forEach(g=>{ if(g.category){ catMap[g.category]=(catMap[g.category]||0)+Number(g.total||0); } });
+  const catEntries = Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
+  if (catEntries.length) {
+    setH('pd-cat-summary', catEntries.map(([cat,amt])=>{
+      const pct = total>0 ? Math.round(amt/total*100) : 0;
+      const color = CAT_COLORS[cat]||'#94a3b8';
+      return `<div style="margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
+          <span style="font-weight:600;color:#334155">${cat}</span>
+          <span style="color:#64748b">${FMT_KZ(amt)} (${pct}%)</span>
+        </div>
+        <div style="height:6px;background:#f1f5f9;border-radius:3px">
+          <div style="height:6px;width:${pct}%;background:${color};border-radius:3px;transition:width .4s"></div>
+        </div>
+      </div>`;
+    }).join(''));
+  } else {
+    setH('pd-cat-summary','<div style="color:#94a3b8;font-size:13px;text-align:center;padding:20px">Sem gastos registados.</div>');
+  }
+
+  // Budget progress
+  const p = _allProjects.find(x=>x.id===_currentProjectId);
+  if (p) {
+    const budget = Number(p.budget||0);
+    const pct = budget>0 ? Math.min(100,Math.round(total/budget*100)) : 0;
+    setT('pd-progress', pct+'%');
+    const barEl = document.getElementById('pd-progress-bar');
+    if (barEl) barEl.style.width = pct+'%';
+  }
+
+  // Expense table
+  if (_currentGastos.length) {
+    const rows = _currentGastos.map(g=>{
+      const color = CAT_COLORS[g.category]||'#94a3b8';
+      const safeId = g.id.replace(/'/g,'');
+      return `<tr>
+        <td><strong>${g.description||'—'}</strong></td>
+        <td><span style="background:${color}22;color:${color};padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">${g.category||'—'}</span></td>
+        <td style="white-space:nowrap">${g.qty||1} × ${Number(g.unitPrice||0).toLocaleString('pt-PT')} Kz</td>
+        <td><strong>${FMT_KZ(g.total)}</strong></td>
+        <td>${g.supplier||'—'}</td>
+        <td>${g.buyer||'—'}</td>
+        <td style="white-space:nowrap">${g.date||'—'}</td>
+        <td>${g.invoiceDelivered?'<span style="color:#10b981;font-weight:600">✓ Sim</span>':'<span style="color:#94a3b8">Não</span>'}</td>
+        <td style="white-space:nowrap">
+          <span class="icon-btn" onclick="openGastoModal('${safeId}')" title="Editar"><i class="ti ti-edit"></i></span>
+          <span class="icon-btn" onclick="deleteGasto('${safeId}')" title="Apagar" style="color:#ef4444"><i class="ti ti-trash"></i></span>
+        </td>
+      </tr>`;
+    }).join('');
+    setH('pd-gastos-content',`<div style="overflow-x:auto"><table>
+      <thead><tr><th>Descrição</th><th>Categoria</th><th>Qty × Preço</th><th>Total</th><th>Fornecedor</th><th>Comprado por</th><th>Data</th><th>Factura</th><th>Ações</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div style="padding:14px;border-top:1px solid #f1f5f9;display:flex;justify-content:flex-end;gap:8px;font-size:13px">
+      <span style="color:#64748b">Total gastos:</span>
+      <strong style="color:#0f172a">${FMT_KZ(total)}</strong>
+    </div></div>`);
+  } else {
+    setH('pd-gastos-content',`<div style="text-align:center;padding:40px;color:#94a3b8">
+      <i class="ti ti-box" style="font-size:40px;display:block;margin-bottom:8px"></i>
+      <div style="font-weight:600;margin-bottom:4px">Nenhum gasto registado</div>
+      <div style="font-size:13px;margin-bottom:16px">Começa adicionando os custos do projecto</div>
+      <button class="btn btn-primary btn-sm" onclick="openGastoModal()"><i class="ti ti-plus"></i> Adicionar Primeiro Gasto</button>
+    </div>`);
+  }
+}
+
+window.openGastoModal = function(id) {
+  const reset = () => {
+    document.getElementById('gasto-edit-id').value = '';
+    document.getElementById('gasto-cat').value = '';
+    document.getElementById('gasto-desc-input').value = '';
+    document.getElementById('gasto-qty').value = 1;
+    document.getElementById('gasto-price').value = '';
+    document.getElementById('gasto-total').value = '';
+    document.getElementById('gasto-supplier').value = '';
+    document.getElementById('gasto-buyer').value = '';
+    document.getElementById('gasto-invoice-num').value = '';
+    document.getElementById('gasto-payment').value = 'Dinheiro';
+    document.getElementById('gasto-invoice-delivered').checked = false;
+    document.getElementById('gasto-notes').value = '';
+    document.getElementById('gasto-date').value = new Date().toISOString().slice(0,10);
+    document.getElementById('gasto-modal-title').textContent = 'Adicionar Gasto';
+  };
+  reset();
+  if (id) {
+    const g = _currentGastos.find(x=>x.id===id);
+    if (g) {
+      document.getElementById('gasto-edit-id').value = id;
+      document.getElementById('gasto-cat').value = g.category||'';
+      document.getElementById('gasto-desc-input').value = g.description||'';
+      document.getElementById('gasto-qty').value = g.qty||1;
+      document.getElementById('gasto-price').value = g.unitPrice||'';
+      document.getElementById('gasto-total').value = g.total||'';
+      document.getElementById('gasto-supplier').value = g.supplier||'';
+      document.getElementById('gasto-buyer').value = g.buyer||'';
+      document.getElementById('gasto-invoice-num').value = g.invoiceNum||'';
+      document.getElementById('gasto-payment').value = g.payment||'Dinheiro';
+      document.getElementById('gasto-invoice-delivered').checked = !!g.invoiceDelivered;
+      document.getElementById('gasto-notes').value = g.notes||'';
+      document.getElementById('gasto-date').value = g.date||'';
+      document.getElementById('gasto-modal-title').textContent = 'Editar Gasto';
+    }
+  }
+  document.getElementById('gasto-modal').style.display='flex';
+};
+
+window.closeGastoModal = function() {
+  document.getElementById('gasto-modal').style.display='none';
+};
+
+window.calcGastoTotal = function() {
+  const qty = parseFloat(document.getElementById('gasto-qty').value)||0;
+  const price = parseFloat(document.getElementById('gasto-price').value)||0;
+  if (qty && price) document.getElementById('gasto-total').value = Math.round(qty*price);
+};
+
+window.saveGasto = async function() {
+  const cat = document.getElementById('gasto-cat').value;
+  const desc = document.getElementById('gasto-desc-input').value.trim();
+  if (!cat) { alert('Selecciona uma categoria.'); return; }
+  if (!desc) { alert('Introduz uma descrição.'); return; }
+  const totalVal = parseFloat(document.getElementById('gasto-total').value)||0;
+  if (!totalVal) { alert('Introduz o valor total.'); return; }
+
+  const data = {
+    projectId: _currentProjectId,
+    category: cat,
+    description: desc,
+    qty: parseFloat(document.getElementById('gasto-qty').value)||1,
+    unitPrice: parseFloat(document.getElementById('gasto-price').value)||0,
+    total: totalVal,
+    supplier: document.getElementById('gasto-supplier').value.trim(),
+    buyer: document.getElementById('gasto-buyer').value.trim(),
+    invoiceNum: document.getElementById('gasto-invoice-num').value.trim(),
+    payment: document.getElementById('gasto-payment').value,
+    invoiceDelivered: document.getElementById('gasto-invoice-delivered').checked,
+    notes: document.getElementById('gasto-notes').value.trim(),
+    date: document.getElementById('gasto-date').value,
+    createdAt: serverTimestamp()
+  };
+
+  const editId = document.getElementById('gasto-edit-id').value;
+  try {
+    if (editId) {
+      await updateDoc(doc(db,'project_gastos',editId), data);
+    } else {
+      await addDoc(collection(db,'project_gastos'), data);
+    }
+    window.closeGastoModal();
+  } catch(e) { alert('Erro ao guardar: '+e.message); }
+};
+
+window.deleteGasto = async function(id) {
+  if (!confirm('Apagar este gasto?')) return;
+  try { await deleteDoc(doc(db,'project_gastos',id)); } catch(e) { alert('Erro: '+e.message); }
+};
+
+window.exportProjectCSV = function() {
+  if (!_currentGastos.length) { alert('Sem gastos para exportar.'); return; }
+  const p = _allProjects.find(x=>x.id===_currentProjectId);
+  const projectName = p ? p.title : 'projecto';
+  const header = ['Descrição','Categoria','Quantidade','Preço Unit. (Kz)','Total (Kz)','Fornecedor','Comprado por','Data','Nº Factura','Pagamento','Factura Entregue','Notas'];
+  const rows = _currentGastos.map(g=>[
+    `"${(g.description||'').replace(/"/g,'""')}"`,
+    g.category||'',
+    g.qty||1,
+    g.unitPrice||0,
+    g.total||0,
+    `"${(g.supplier||'').replace(/"/g,'""')}"`,
+    `"${(g.buyer||'').replace(/"/g,'""')}"`,
+    g.date||'',
+    `"${(g.invoiceNum||'').replace(/"/g,'""')}"`,
+    g.payment||'',
+    g.invoiceDelivered?'Sim':'Não',
+    `"${(g.notes||'').replace(/"/g,'""')}"`
+  ].join(','));
+  const csv = [header.join(','), ...rows].join('\n');
+  const blob = new Blob(['﻿'+csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `gastos-${projectName.replace(/\s+/g,'-')}.csv`; a.click();
+  URL.revokeObjectURL(url);
 };
 
 /* ──────────────────────── CHAT ──────────────────────── */
@@ -2113,39 +2315,129 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
             <div style="display:flex;align-items:center;gap:8px">
               <div class="page-title" id="pd-title">—</div>
               <span id="pd-unit-badge" class="unit-b">—</span>
-              <span id="pd-status-pill" class="pill pill-blue">—</span>
             </div>
             <div class="page-sub" id="pd-sub">—</div>
           </div>
         </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-sm admin-only" onclick="editCurrentProject()"><i class="ti ti-edit"></i> Editar</button>
-          <button class="btn btn-sm admin-only" style="color:#ef4444" onclick="deleteCurrentProject()"><i class="ti ti-trash"></i> Apagar</button>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-sm admin-only" onclick="editCurrentProject()" title="Editar Projecto"><i class="ti ti-edit"></i></button>
+          <button class="btn btn-sm admin-only" style="color:#ef4444" onclick="deleteCurrentProject()" title="Apagar Projecto"><i class="ti ti-trash"></i></button>
+          <button class="btn btn-sm" onclick="exportProjectCSV()"><i class="ti ti-download"></i> Exportar CSV</button>
+          <button class="btn btn-primary btn-sm" onclick="openGastoModal()"><i class="ti ti-plus"></i> Adicionar Gasto</button>
         </div>
       </div>
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-label">Orçamento</div><div class="stat-value" id="pd-budget" style="font-size:20px">—</div></div>
-        <div class="stat-card"><div class="stat-label">Total gasto</div><div class="stat-value" id="pd-spent" style="font-size:20px;color:#ef4444">—</div></div>
-        <div class="stat-card"><div class="stat-label">Saldo disponível</div><div class="stat-value" id="pd-balance" style="font-size:20px;color:#16a34a">—</div></div>
+
+      <!-- Stats -->
+      <div class="stats-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stat-card" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff">
+          <div class="stat-label" style="color:rgba(255,255,255,.8)">Total Gasto</div>
+          <div style="font-size:26px;font-weight:800;margin:6px 0" id="pd-total-gasto">0 Kz</div>
+        </div>
         <div class="stat-card">
-          <div class="stat-label">Progresso</div>
-          <div class="stat-value" id="pd-progress" style="font-size:20px">—</div>
-          <div class="progress-bar" style="margin-top:10px"><div class="progress-fill" id="pd-progress-bar" style="width:0%"></div></div>
+          <div class="stat-label">Itens Registados</div>
+          <div class="stat-value" id="pd-itens-count" style="font-size:26px">0</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px" id="pd-categorias-count">0 categorias</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Média por Item</div>
+          <div class="stat-value" id="pd-media" style="font-size:26px">0</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px">Kz por Item</div>
         </div>
       </div>
+
+      <!-- Category summary + Project info -->
       <div class="grid-2">
         <div class="card">
-          <div class="card-title">Descrição <i class="ti ti-info-circle"></i></div>
-          <p id="pd-desc" style="font-size:14px;color:#475569;line-height:1.7;margin:0">—</p>
+          <div class="card-title">Resumo por Categoria</div>
+          <div id="pd-cat-summary">
+            <div style="color:#94a3b8;font-size:13px;text-align:center;padding:20px">Sem gastos registados.</div>
+          </div>
         </div>
         <div class="card">
-          <div class="card-title">Informações <i class="ti ti-list-details"></i></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px">
-            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Unidade</div><div id="pd-info-unit" style="font-weight:700">—</div></div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <div class="card-title" style="margin:0">Informações do Projecto</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px;margin-bottom:12px">
+            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Orçamento</div><div id="pd-budget" style="font-weight:700">—</div></div>
             <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Responsável</div><div id="pd-info-resp" style="font-weight:700">—</div></div>
-            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Data início</div><div id="pd-info-start" style="font-weight:700">—</div></div>
+            <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Data Início</div><div id="pd-info-start" style="font-weight:700">—</div></div>
             <div style="padding:10px;background:#f8fafc;border-radius:8px"><div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px">Estado</div><div id="pd-info-status" style="font-weight:700">—</div></div>
           </div>
+          <div style="padding:12px;background:#f8fafc;border-radius:8px;font-size:13px;color:#475569;line-height:1.6;margin-bottom:12px" id="pd-desc">—</div>
+          <div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;color:#64748b;margin-bottom:4px">
+              <span>Progresso do orçamento</span><span id="pd-progress">0%</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="pd-progress-bar" style="width:0%"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Expense table -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <div class="card-title" style="margin:0">Planilha Detalhada de Gastos</div>
+        </div>
+        <div id="pd-gastos-content">
+          <div style="text-align:center;padding:40px;color:#94a3b8">
+            <i class="ti ti-box" style="font-size:40px;display:block;margin-bottom:8px"></i>
+            <div style="font-weight:600;margin-bottom:4px">Nenhum gasto registado</div>
+            <div style="font-size:13px;margin-bottom:16px">Começa adicionando os custos do projecto</div>
+            <button class="btn btn-primary btn-sm" onclick="openGastoModal()"><i class="ti ti-plus"></i> Adicionar Primeiro Gasto</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Adicionar/Editar Gasto (Projecto) -->
+    <div id="gasto-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)closeGastoModal()">
+      <div style="background:#fff;border-radius:18px;width:580px;max-width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 60px rgba(0,0,0,.18)">
+        <div style="position:sticky;top:0;background:#fff;padding:20px 24px 16px;border-bottom:1px solid #f1f5f9;border-radius:18px 18px 0 0;display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:17px;font-weight:700;color:#0f172a" id="gasto-modal-title">Adicionar Gasto</div>
+          <button onclick="closeGastoModal()" style="background:none;border:none;cursor:pointer;font-size:20px;color:#94a3b8;line-height:1">×</button>
+        </div>
+        <div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+          <input type="hidden" id="gasto-edit-id">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group">
+              <label>Categoria *</label>
+              <select id="gasto-cat" style="width:100%">
+                <option value="">Seleccionar categoria…</option>
+                <option>Carteiras</option><option>Soldadura</option><option>Portas</option>
+                <option>Vidros</option><option>Telhado</option><option>Chão</option>
+                <option>Paredes</option><option>Gesso</option><option>Madeira</option>
+                <option>Metal</option><option>Electricidade</option><option>Canalizações</option><option>Outros</option>
+              </select>
+            </div>
+            <div class="form-group"><label>Data da Compra</label><input type="date" id="gasto-date" style="width:100%"></div>
+          </div>
+          <div class="form-group"><label>Descrição *</label><input type="text" id="gasto-desc-input" placeholder="Ex. Saco de cimento 50kg" style="width:100%"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+            <div class="form-group"><label>Quantidade</label><input type="number" id="gasto-qty" value="1" min="1" oninput="calcGastoTotal()" style="width:100%"></div>
+            <div class="form-group"><label>Preço Unitário (Kz)</label><input type="number" id="gasto-price" placeholder="0" min="0" oninput="calcGastoTotal()" style="width:100%"></div>
+            <div class="form-group"><label>Total (Kz) *</label><input type="number" id="gasto-total" placeholder="0" min="0" style="width:100%;background:#f8fafc"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>Fornecedor</label><input type="text" id="gasto-supplier" placeholder="Nome do fornecedor" style="width:100%"></div>
+            <div class="form-group"><label>Comprado por</label><input type="text" id="gasto-buyer" placeholder="Nome" style="width:100%"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div class="form-group"><label>Número da Factura</label><input type="text" id="gasto-invoice-num" placeholder="Ex. 001/0525" style="width:100%"></div>
+            <div class="form-group"><label>Método de Pagamento</label>
+              <select id="gasto-payment" style="width:100%">
+                <option>Dinheiro</option><option>Transferência</option><option>Cheque</option>
+              </select>
+            </div>
+          </div>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px;font-weight:500">
+            <input type="checkbox" id="gasto-invoice-delivered" style="width:16px;height:16px">
+            Factura Entregue
+          </label>
+          <div class="form-group"><label>Notas</label><textarea id="gasto-notes" placeholder="Observações adicionais…" style="width:100%;height:70px;resize:vertical"></textarea></div>
+        </div>
+        <div style="position:sticky;bottom:0;background:#fff;padding:16px 24px;border-top:1px solid #f1f5f9;border-radius:0 0 18px 18px;display:flex;gap:10px;justify-content:flex-end">
+          <button class="btn btn-sm" onclick="closeGastoModal()">Cancelar</button>
+          <button class="btn btn-primary btn-sm" onclick="saveGasto()"><i class="ti ti-device-floppy"></i> Guardar</button>
         </div>
       </div>
     </div>
@@ -2532,8 +2824,8 @@ label{font-size:12px;color:#64748b;display:block;margin-bottom:4px;font-weight:6
 
 <script>
 var ROLE_PAGES_JS = {
-  admin:           ['dashboard','tasks','projects','materials','tools','prices','chat','reports','settings'],
-  tecnico:         ['dashboard','tasks','materials','tools','prices','chat'],
+  admin:           ['dashboard','tasks','projects','projectdetail','materials','tools','prices','chat','reports','settings'],
+  tecnico:         ['dashboard','tasks','projects','projectdetail','materials','tools','prices','chat'],
   recetor_faturas: ['dashboard','materials','chat'],
 };
 function showPage(name) {
